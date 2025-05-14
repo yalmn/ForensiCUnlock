@@ -37,12 +37,15 @@ int auto_mount_and_find_ewf(const char *device, char *selected_dir, size_t max_l
 
     while ((entry = readdir(base)) != NULL)
     {
-        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
-        {
-            char path[1024];
-            snprintf(path, sizeof(path), "%s/%s", MOUNT_POINT, entry->d_name);
+        // Verwende stat() statt d_type (kompatibel mit allen Dateisystemen)
+        char fullpath[1024];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", MOUNT_POINT, entry->d_name);
 
-            DIR *sub = opendir(path);
+        struct stat st;
+        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode) &&
+            strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
+        {
+            DIR *sub = opendir(fullpath);
             if (!sub)
                 continue;
 
@@ -51,7 +54,7 @@ int auto_mount_and_find_ewf(const char *device, char *selected_dir, size_t max_l
             {
                 if (strstr(subentry->d_name, "image.E") != NULL)
                 {
-                    strncpy(selected_dir, path, max_len - 1);
+                    strncpy(selected_dir, fullpath, max_len - 1);
                     selected_dir[max_len - 1] = '\0';
                     closedir(sub);
                     closedir(base);
