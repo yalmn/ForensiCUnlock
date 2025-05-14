@@ -1,0 +1,31 @@
+# Shell scripts: immer LF (Unix-Style)
+*.sh text eol=lf
+
+# C/C++ Quellcode: immer LF
+*.c text eol=lf
+*.h text eol=lf
+
+# Markdown/README: immer LF
+*.md text eol=lf
+
+# Konfigurations- und Skriptdateien
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.conf text eol=lf
+
+# Windows-spezifische Dateien: CRLF, falls notwendig
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binärdateien: nicht ändern
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary

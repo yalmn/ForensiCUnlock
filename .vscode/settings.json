@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "errno.h": "c",
+        "partition_parser.h": "c",
+        "stdint.h": "c",
+        "loop_device.h": "c",
+        "stdlib.h": "c",
+        "imager.h": "c",
+        "forensic.h": "c",
+        "mount_selector.h": "c"
+    }
+}
