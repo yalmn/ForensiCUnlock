@@ -1,64 +1,43 @@
-// src/mapper.c
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
+#include <sys/wait.h>
 #include "mapper.h"
-
-#define MAPFILE_PATH "/mnt/output/dmsetup.txt"
 
 int create_mapping_file(const char *loop_orig, const char *loop_decrypted, uint64_t bdp_start, uint64_t bdp_length)
 {
-    FILE *fp = fopen(MAPFILE_PATH, "w");
-    if (!fp)
-    {
-        perror("Fehler beim Erstellen der Mapping-Datei");
-        return 0;
-    }
+    FILE *fp = fopen("/mnt/output/dmsetup.txt", "w");
+    if (!fp) return 0;
 
-    // Abschnitt vor BDP
-    fprintf(fp, "0 %llu linear %s 0\n", bdp_start, loop_orig);
+    fprintf(fp, "0 %lu linear %s 0\n", (unsigned long)bdp_start, loop_orig);
+    fprintf(fp, "%lu %lu linear %s 0\n", (unsigned long)bdp_start, (unsigned long)bdp_length, loop_decrypted);
 
-    // Entschlüsselter BDP-Bereich
-    fprintf(fp, "%llu %llu linear %s 0\n", bdp_start, bdp_length, loop_decrypted);
-
-    // Bereich nach BDP
-    // Hole Gesamtgröße des Images über blockdev
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "blockdev --getsz %s", loop_orig);
+    char cmd[] = "blockdev --getsz /mnt/xmount/image.dd";
     FILE *pipe = popen(cmd, "r");
-    if (!pipe)
-    {
-        perror("Fehler bei blockdev");
-        fclose(fp);
-        return 0;
-    }
+    if (!pipe) return 0;
 
-    unsigned long long total_sectors = 0;
-    fscanf(pipe, "%llu", &total_sectors);
+    unsigned long total_sectors = 0;
+    fscanf(pipe, "%lu", &total_sectors);
     pclose(pipe);
 
-    uint64_t rest_start = bdp_start + bdp_length;
-    uint64_t rest_length = total_sectors - rest_start;
-
-    fprintf(fp, "%llu %llu linear %s %llu\n", rest_start, rest_length, loop_orig, rest_start);
+    unsigned long rest_start = bdp_start + bdp_length;
+    unsigned long rest_length = total_sectors - rest_start;
+    fprintf(fp, "%lu %lu linear %s %lu\n", rest_start, rest_length, loop_orig, rest_start);
 
     fclose(fp);
-    printf("Mapping-Datei erfolgreich erstellt: %s\n", MAPFILE_PATH);
     return 1;
 }
 
 int setup_dm_device()
 {
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "dmsetup create merged < %s", MAPFILE_PATH);
-    int ret = system(cmd);
-    if (ret != 0)
-    {
-        fprintf(stderr, "Fehler bei dmsetup create. Code: %d\n", ret);
+    int status = system("dmsetup create merged /mnt/output/dmsetup.txt");
+    if (status == -1) {
+        perror("Fehler bei dmsetup");
         return 0;
     }
-    printf("Gerät /dev/mapper/merged wurde erfolgreich erstellt.\n");
-    return 1;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }

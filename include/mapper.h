@@ -1,4 +1,3 @@
-// include/mapper.h
 #ifndef MAPPER_H
 #define MAPPER_H
 
