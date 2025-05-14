@@ -1,6 +1,6 @@
 ﻿# 🛡️ ForensiCUnlock: Automatisierte BitLocker-Entschlüsselung und Image-Zusammenführung
 
-ForensiCUnlock ist ein vollautomatisiertes C-Tool zur Analyse und Rekonstruktion von BitLocker-verschlüsselten Partitionen aus forensischen Arbeitskopien. Es wurde für den Einsatz in digitalen Ermittlungen und IT-Forensik entwickelt.
+ForensiCUnlock ist ein vollautomatisiertes C-Tool zur Analyse und Rekonstruktion von BitLocker-verschlüsselten Partitionen aus forensischen Arbeitskopien.
 
 ## Funktionen
 
