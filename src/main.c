@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc < 4) {
-        fprintf(stderr, "Usage: %s <device> <bitlocker_key> <output_folder>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <device|image> <bitlocker_key> <output_folder>\n", argv[0]);
         return 1;
     }
 
