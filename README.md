@@ -1,203 +1,201 @@
-# 🛡️ ForensiCUnlock: Automatisierte BitLocker-Entschlüsselung und Image-Zusammenführung
+# ForensiCUnlock
 
-ForensiCUnlock ist ein vollautomatisiertes C-Tool zur Analyse und Rekonstruktion von BitLocker-verschlüsselten Partitionen aus forensischen Arbeitskopien.
-
-## Funktionen
-
-- Automatisches Mounten forensischer Datenträger
-- Erkennung von `.E01`, `.EWF`, `.dd`, `.raw` Images
-- Konvertierung von `.E01`/`.EWF` nach `.dd` mittels `xmount`
-- Analyse der GPT-Partitionstabelle via `mmls` (Sleuthkit)
-- Automatische Erkennung und Entschlüsselung der BDP (Basic Data Partition) mit `dislocker`
-- Aufbau eines virtuellen gemergten Devices über `dmsetup`
-- Erzeugung eines finalen Disk-Images mit `ddrescue`
-- Automatisierter Cleanup (`cleanup.sh`)
-- Docker-Integration für reproduzierbare Umgebung
+ForensiCUnlock ist ein forensisches Entschlüsselungs-Tool, das speziell für die Verarbeitung von BitLocker-verschlüsselten Partitionen in EWF- oder RAW-Images konzipiert wurde. Es automatisiert die komplette Analysepipeline – von der Image-Erkennung, Konvertierung, Analyse bis zur Entschlüsselung und logischen Zusammenführung über dmsetup.
 
 ---
 
-## Voraussetzungen
+## Funktionsweise
 
-Benötigte Tools (werden im Docker/Install-Skript bereitgestellt):
+ForensiCUnlock besteht aus mehreren Modulen, die jeweils für eine bestimmte Stufe der Entschlüsselung und Analyse zuständig sind.
 
-- `xmount`
-- `dislocker`
-- `ddrescue`
-- `sleuthkit` (für `mmls`)
-- `gcc`, `make`, `libc-dev`
+### main.c
+
+Zentrale Steuereinheit. Ruft alle Teilmodule auf, prüft Rechte und erwartet:
+
+- Gerät oder Partition (z. B. /dev/sdb1)
+- BitLocker-Schlüssel
+- Zielordner für alle Ausgaben
+
+### mount_selector.c
+
+Mountet das Beweismittel (z. B. /dev/sdb1) und sucht nach .E01- oder .ewf-Dateien. Gibt das passende Verzeichnis zurück.
+
+### image_converter.c
+
+Wandelt das EWF-Image mithilfe von xmount in ein RAW-Image (.dd) um. Die RAW-Datei wird im Unterordner `xmount/` im Arbeitsverzeichnis abgelegt.
+
+### partition_parser.c
+
+Führt mmls aus, extrahiert automatisch die Partition mit der Bezeichnung "Basic data partition" (BDP). Erkennt deren Start-Offset und Länge. Die mmls-Ausgabe wird angezeigt, bevor fortgefahren wird.
+
+### dislocker_runner.c
+
+Startet dislocker mit dem berechneten Offset auf der RAW-Datei. Der BitLocker-Schlüssel wird übergeben. Die entschlüsselte Datei `dislocker-file` wird im Unterordner `bitlocker/` gespeichert.
+
+### loop_device.c
+
+Bindet das Originalimage und die entschlüsselte Datei als Loop-Devices ein. Gibt die Pfade der zugehörigen /dev/loopX-Geräte zurück.
+
+### mapper.c
+
+Erstellt die Mapping-Datei `dmsetup.txt`, die folgende Zonen beschreibt:
+
+- Vor der verschlüsselten Partition → aus originalem Image
+- Entschlüsselter Bereich → aus dislocker-file
+- Nachfolgende Sektoren → wieder aus originalem Image
+
+Setzt anschließend das zusammengeführte Gerät unter `/dev/mapper/merged` mit Hilfe von `dmsetup create`.
 
 ---
 
-## Deployment & Build (Linux / Kali)
+## Installation
+
+### Lokale Ausführung (Linux)
+
+1. Abhängigkeiten installieren (automatisiert):
 
 ```bash
-git clone https://github.com/dein-user/ForensiCUnlock.git
-cd ForensiCUnlock
-
-# Setup (erstellt /mnt-Pfade, installiert Tools, kompiliert)
-chmod +x scripts/install.sh
-./scripts/install.sh
+sudo ./scripts/install.sh
 ```
 
----
-
-## Docker (alternativ)
+2. Kompilieren:
 
 ```bash
-docker build -t forensicunlock -f docker/Dockerfile .
+make
+```
 
-docker run -it --privileged \
-  -v /dev:/dev \
-  -v /mnt:/mnt \
-  forensicunlock
+3. Starten:
+
+```bash
+sudo ./forensic_unlock <device_or_image> <bitlocker_key> <output_folder>
+```
+
+### Docker-Ausführung
+
+1. Docker-Image erstellen:
+
+```bash
+docker build -t forensicunlock .
+```
+
+2. Ausführen:
+
+```bash
+sudo docker run --rm -it --privileged \
+    -v /dev:/dev \
+    -v /mnt/output:/mnt/output \
+    forensicunlock /dev/sdb1 "MEIN-SCHLUESSEL" /mnt/output/Fall_ABC
+```
+
+### Alternativ: Ausführung über run-docker.sh
+
+Erstelle oder nutze das Skript `run-docker.sh`, um Docker einfach mit Parametern zu starten:
+
+```bash
+#!/bin/bash
+
+if [ "$EUID" -ne 0 ]; then
+  echo "[!] Bitte als root oder mit sudo ausführen."
+  exit 1
+fi
+
+if [ "$#" -ne 3 ]; then
+  echo "Usage: sudo ./run-docker.sh <device_or_image> <bitlocker_key> <output_path>"
+  echo "Beispiel: sudo ./run-docker.sh /dev/sdb1 ABCD-1234 ~/Desktop/FallXYZ"
+  exit 1
+fi
+
+DEVICE=$1
+KEY=$2
+OUT_PATH=$3
+
+ABS_OUT_PATH=$(realpath "$OUT_PATH")
+mkdir -p "$ABS_OUT_PATH"
+
+docker run --rm -it --privileged \
+  -v "$DEVICE":"$DEVICE" \
+  -v "$ABS_OUT_PATH":"$ABS_OUT_PATH" \
+  forensicunlock "$DEVICE" "$KEY" "$ABS_OUT_PATH"
+```
+
+Dann einfach aufrufen mit:
+
+```bash
+sudo ./run-docker.sh /dev/sdb1 "BITLOCKER-KEY" ~/Desktop/FallXYZ
 ```
 
 ---
 
 ## Nutzung
 
-```bash
-sudo ./forensic_unlock /dev/sdX <bitlocker_recovery_key>
-```
-
-Beispiel:
+### Syntax
 
 ```bash
-sudo ./forensic_unlock /dev/sdb2 123456-789012-345678-901234-567890-123456-789012
+sudo ./forensic_unlock <device_or_image> <bitlocker_key> <output_folder>
 ```
 
-Das Tool erkennt automatisch, ob es sich um eine `.E01`/`.EWF` oder `.dd`-Datei handelt.
-
----
-
-## Oberflächliche Funktionsübersicht
-
-| Modul              | Funktion                                                             |
-| ------------------ | -------------------------------------------------------------------- |
-| `mount_selector`   | Mountet `/dev/sdX` nach `/mnt/output`, findet Image-Verzeichnis      |
-| `image_converter`  | Konvertiert `.E01`/`.EWF` mit `xmount` in `/mnt/xmount/image.dd`     |
-| `partition_parser` | Analysiert Partitionstabelle mit `mmls`, erkennt BDP-Start und Länge |
-| `dislocker_runner` | Entschlüsselt den BDP-Bereich basierend auf Recovery-Key             |
-| `loop_device`      | Erstellt Loop-Devices aus RAW und entschlüsseltem Bereich            |
-| `mapper`           | Erstellt Mapping-Datei + führt `dmsetup create` aus                  |
-| `imager`           | Führt `ddrescue` durch → erzeugt `/mnt/output/merged_image.dd`       |
-
----
-
-## Cleanup
+### Beispiel
 
 ```bash
-sudo ./scripts/cleanup.sh
+sudo ./forensic_unlock /dev/sdb1 "ABC1-DEF2-KEY3" ~/Desktop/Fall_XYZ
 ```
 
-- Unmountet `/mnt/output`, `/mnt/xmount`, `/mnt/bitlocker`
-- Löst Loop-Devices
-- Entfernt `/dev/mapper/merged`
+---
+
+## Ablauf
+
+1. `/dev/sdb1` wird nach `/mnt/output` gemountet
+2. EWF-Verzeichnis wird erkannt
+3. `.E01` → `.dd` Konvertierung unter `output_folder/xmount/image.dd`
+4. `mmls` zeigt Partitionstabelle, Benutzer bestätigt per ENTER
+5. BDP wird analysiert, dislocker entschlüsselt diesen Bereich
+6. dislocker-file unter `output_folder/bitlocker/dislocker-file`
+7. Zwei Loop-Devices werden erstellt
+8. Mapping-Datei `output_folder/dmsetup.txt` wird generiert
+9. `dmsetup` erzeugt `/dev/mapper/merged` für Mounting/Analyse
 
 ---
 
-## Ausgabedateien
+## Ausgabestruktur
 
-| Pfad                              | Bedeutung                          |
-| --------------------------------- | ---------------------------------- |
-| `/mnt/xmount/image.dd`            | Originales RAW-Image (wenn `.E01`) |
-| `/mnt/bitlocker/dislocker-file`   | Entschlüsselter BDP-Bereich        |
-| `/mnt/output/dmsetup.txt`         | Mapping-Datei für `dmsetup`        |
-| `/dev/mapper/merged`              | Virtuelles gemergtes Device        |
-| `/mnt/output/merged_image.dd`     | Finale forensische Arbeitskopie    |
-| `/mnt/output/merged_image.dd.log` | Logfile von `ddrescue`             |
+Der gesamte Output wird unter dem vom Benutzer angegebenen Zielordner gespeichert.
 
----
+Beispiel: `~/Desktop/Fall_XYZ`
 
-## Beispiel-Szenario
-
-### Szenario 1: Lokale Ausführung unter Kali Linux
-
-1. Repository klonen:
-
-   ```bash
-   git clone https://github.com/yalmn/ForensiCUnlock.git
-   cd ForensiCUnlock
-   ```
-
-2. Installationsskript ausführen:
-
-   ```bash
-   chmod +x scripts/install.sh
-   ./scripts/install.sh
-   ```
-
-3. Tool mit forensischem Device starten:
-
-   ```bash
-   sudo ./forensic_unlock /dev/sdb2 <bitlocker_key>
-   ```
-
-4. Entschlüsseltes, gemergtes Image unter:
-
-   ```
-   /mnt/output/merged_image.dd
-   ```
-
-5. Abschließend bereinigen:
-   ```bash
-   sudo ./scripts/cleanup.sh
-   ```
+```
+~/Desktop/Fall_XYZ/
+├── xmount/
+│   └── image.dd
+├── bitlocker/
+│   └── dislocker-file
+├── dmsetup.txt
+```
 
 ---
 
-### Szenario 2: Analyse in Docker-Umgebung
+## Ergebnisbereitstellung
 
-**Schneller Einstieg per Skript:**
+Nach erfolgreichem Lauf:
+
+- Loop Device (Original): /dev/loopX
+- Loop Device (Entschlüsselt): /dev/loopY
+- Zusammengeführtes Gerät: /dev/mapper/merged
+
+---
+
+## Optional: Manuelles Mounten
 
 ```bash
-chmod +x scripts/run-docker.sh
-./scripts/run-docker.sh
+sudo mkdir /mnt/final
+sudo mount /dev/mapper/merged /mnt/final
 ```
 
-Alternativ manuell:
+---
 
-1. Image bauen:
+## Hinweise
 
-   ```bash
-   docker build -t forensicunlock -f docker/Dockerfile .
-   ```
+- Das Tool benötigt zwingend Root-Rechte
+- Alle Ausgaben liegen im Zielordner – es ist kein separater Cleanup nötig
+- Die `dmsetup.txt` wird dynamisch auf Basis der Partitionsstruktur erzeugt
 
-2. Container starten mit Zugriff auf echte Devices:
-
-   ```bash
-   docker run -it --privileged \
-     -v /dev:/dev \
-     -v /mnt:/mnt \
-     forensicunlock
-   ```
-
-3. Im Container ausführen:
-
-   ```bash
-   sudo ./forensic_unlock /dev/sdb2 <bitlocker_key>
-   ```
-
-4. Entschlüsseltes Image befindet sich auf dem gemounteten Host:
-
-   ```
-   /mnt/output/merged_image.dd
-   ```
-
-5. Nach Analyse Cleanup:
-
-   ```bash
-   sudo ./scripts/cleanup.sh
-   ```
-
-6. Ermittler erhält forensisches Image (`image.E01`) auf `/dev/sdb2`
-7. Start mit:
-   ```bash
-   sudo ./forensic_unlock /dev/sdb2 123456-789012-...
-   ```
-8. Tool mountet, konvertiert, entschlüsselt und merged automatisch
-9. Analysierbares Image unter `/mnt/output/merged_image.dd` verfügbar
-10. Nach Analyse:
-    ```bash
-    sudo ./scripts/cleanup.sh
-    ```
+---
