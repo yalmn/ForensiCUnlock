@@ -1,4 +1,4 @@
-﻿# 🛡️ ForensiCUnlock: Automatisierte BitLocker-Entschlüsselung und Image-Zusammenführung
+# 🛡️ ForensiCUnlock: Automatisierte BitLocker-Entschlüsselung und Image-Zusammenführung
 
 ForensiCUnlock ist ein vollautomatisiertes C-Tool zur Analyse und Rekonstruktion von BitLocker-verschlüsselten Partitionen aus forensischen Arbeitskopien.
 
@@ -116,7 +116,7 @@ sudo ./scripts/cleanup.sh
 1. Repository klonen:
 
    ```bash
-   git clone https://github.com/dein-user/ForensiCUnlock.git
+   git clone https://github.com/yalmn/ForensiCUnlock.git
    cd ForensiCUnlock
    ```
 
