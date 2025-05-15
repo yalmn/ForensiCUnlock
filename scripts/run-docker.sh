@@ -1,23 +1,19 @@
 #!/bin/bash
 
-IMAGE_NAME="forensicunlock"
-DOCKERFILE_PATH="docker/Dockerfile"
+DEVICE=$1
+KEY=$2
+OUTPUT=$3
 
-# Prüfen, ob Image bereits existiert
-if ! docker image inspect $IMAGE_NAME >/dev/null 2>&1; then
-    echo "[*] Docker-Image '$IMAGE_NAME' nicht gefunden. Baue jetzt..."
-    docker build -t $IMAGE_NAME -f "$DOCKERFILE_PATH" .
-    if [ $? -ne 0 ]; then
-        echo "[!] Fehler beim Bauen des Docker-Images."
-        exit 1
-    fi
-else
-    echo "[✓] Docker-Image '$IMAGE_NAME' vorhanden."
+if [ $# -ne 3 ]; then
+    echo "Usage: $0 <device> <bitlocker_key> <output_folder>"
+    exit 1
 fi
 
-# Container starten mit privilegierten Rechten und gemounteten Devices
-echo "[*] Starte Docker-Container..."
-docker run -it --rm --privileged \
-  -v /dev:/dev \
-  -v /mnt:/mnt \
-  $IMAGE_NAME
+echo "[*] Starte ForensiCUnlock im Docker-Container..."
+docker run --rm -it \
+  --privileged \
+  -v "${DEVICE}":"${DEVICE}" \
+  -v "${OUTPUT}":"${OUTPUT}" \
+  -v "$(pwd)":/tool \
+  forensicunlock \
+  bash -c "cd /tool && sudo ./forensic_unlock '${DEVICE}' '${KEY}' '${OUTPUT}'"
