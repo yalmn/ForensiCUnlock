@@ -133,9 +133,3 @@ Alle relevanten Daten befinden sich im `output_folder`, den du selbst als Argume
 - Kein separater Cleanup nötig – Arbeitsordner ist bereits trennscharf.
 
 ---
-
-## 👨‍💻 Autor & Lizenz
-
-Open Source & frei verwendbar unter MIT-Lizenz.
-
-> Dieses Projekt wurde entwickelt für forensisch wiederholbare und automatisierte BDP-Extraktion aus verschlüsselten Windows-Systemen.
