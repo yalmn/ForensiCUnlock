@@ -13,7 +13,8 @@ int setup_loop_device(const char *file, char *loopdev, size_t size)
     if (!fp)
         return 0;
 
-    if (fgets(loopdev, size, fp) == NULL) {
+    if (fgets(loopdev, size, fp) == NULL)
+    {
         pclose(fp);
         return 0;
     }
