@@ -1,0 +1,217 @@
+/*
+ * all_tests.c
+ * Enthält Unit-Tests für alle wichtigen Funktionen des Tools:
+ *   - get_extension()
+ *   - parse_bdp_line()
+ *   - create_mapping_file()
+ *   - setup_loop_device()
+ *   - convert_ewf_to_raw()
+ *   - run_dislocker()
+ *   - setup_dm_device()
+ *
+ * Leg diese Datei unter tests/all_tests.c ab und kompiliere:
+ *   gcc -Wall -Wextra -std=c11 tests/all_tests.c -o all_tests
+ * Dann ausführen:
+ *   ./all_tests
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <stddef.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+// ------- get_extension() -------
+static const char *get_extension(const char *path)
+{
+    const char *dot = strrchr(path, '.');
+    return (dot && dot != path) ? dot : "";
+}
+#define EXPECT_STR(actual, expected)                                                 \
+    do                                                                               \
+    {                                                                                \
+        if (strcmp(actual, expected) != 0)                                           \
+        {                                                                            \
+            fprintf(stderr, "[FAIL get_extension] %s:%d: erwartet '%s', war '%s'\n", \
+                    __FILE__, __LINE__, expected, actual);                           \
+            exit(1);                                                                 \
+        }                                                                            \
+    } while (0)
+void test_get_extension(void)
+{
+    printf("Teste get_extension()...\n");
+    EXPECT_STR(get_extension("test.ewf"), ".ewf");
+    EXPECT_STR(get_extension("archive.tar.gz"), ".gz");
+    EXPECT_STR(get_extension("no_extension"), "");
+    EXPECT_STR(get_extension(".hiddenfile"), "");
+    EXPECT_STR(get_extension("folder.name/file.txt"), ".txt");
+    printf("[OK] get_extension() Tests bestanden.\n");
+}
+
+// ------- parse_bdp_line() -------
+#include "../src/partition_parser.c"
+#define EXPECT_INT(actual, expected)                                              \
+    do                                                                            \
+    {                                                                             \
+        if ((actual) != (expected))                                               \
+        {                                                                         \
+            fprintf(stderr, "[FAIL parse_bdp_line] %s:%d: erwartet %d, war %d\n", \
+                    __FILE__, __LINE__, (expected), (actual));                    \
+            exit(1);                                                              \
+        }                                                                         \
+    } while (0)
+#define EXPECT_UINT64(actual, expected)                                               \
+    do                                                                                \
+    {                                                                                 \
+        if ((actual) != (expected))                                                   \
+        {                                                                             \
+            fprintf(stderr, "[FAIL parse_bdp_line] %s:%d: erwartet %llu, war %llu\n", \
+                    __FILE__, __LINE__,                                               \
+                    (unsigned long long)(expected),                                   \
+                    (unsigned long long)(actual));                                    \
+            exit(1);                                                                  \
+        }                                                                             \
+    } while (0)
+void test_parse_bdp_line(void)
+{
+    printf("Teste parse_bdp_line()...\n");
+    {
+        const char *line = " 2: 000002048      0000050000      Basic data partition";
+        int slot;
+        uint64_t start, length;
+        EXPECT_INT(parse_bdp_line(line, &slot, &start, &length), 1);
+        EXPECT_INT(slot, 2);
+        EXPECT_UINT64(start, 2048);
+        EXPECT_UINT64(length, 50000);
+    }
+    {
+        const char *line = " 3: 000010000      000020000      NTFS";
+        int slot;
+        uint64_t start, length;
+        EXPECT_INT(parse_bdp_line(line, &slot, &start, &length), 1);
+        EXPECT_INT(slot, 3);
+        EXPECT_UINT64(start, 10000);
+        EXPECT_UINT64(length, 20000);
+    }
+    {
+        const char *line = " 1: 000000000      000000001      Linux filesystem";
+        int slot;
+        uint64_t start, length;
+        EXPECT_INT(parse_bdp_line(line, &slot, &start, &length), 0);
+    }
+    printf("[OK] parse_bdp_line() Tests bestanden.\n");
+}
+
+// ------- create_mapping_file() -------
+#include "mapper.c"
+#define EXPECT_MAP_STR(actual, expected)                                                   \
+    do                                                                                     \
+    {                                                                                      \
+        if (strcmp(actual, expected) != 0)                                                 \
+        {                                                                                  \
+            fprintf(stderr, "[FAIL create_mapping_file] %s:%d: erwartet '%s', war '%s'\n", \
+                    __FILE__, __LINE__, expected, actual);                                 \
+            exit(1);                                                                       \
+        }                                                                                  \
+    } while (0)
+void test_create_mapping_file(void)
+{
+    printf("Teste create_mapping_file()...\n");
+    char template[] = "/tmp/testmapXXXXXX";
+    char *tmpdir = mkdtemp(template);
+    const char *loop_orig = "/dev/loopA";
+    const char *loop_dec = "/dev/loopB";
+    uint64_t start = 10, length = 5;
+    EXPECT_INT(create_mapping_file(loop_orig, loop_dec, start, length, tmpdir), 1);
+    char map_path[512];
+    snprintf(map_path, sizeof(map_path), "%s/dmsetup.txt", tmpdir);
+    FILE *fp = fopen(map_path, "r");
+    EXPECT_PTR(fp, !=, NULL);
+    unsigned long s, l, off;
+    char dev[64];
+    // Zeile 1
+    fscanf(fp, "%lu %lu linear %63s %lu", &s, &l, dev, &off);
+    EXPECT_UINT64(s, 0);
+    EXPECT_UINT64(l, start);
+    EXPECT_MAP_STR(dev, loop_orig);
+    EXPECT_UINT64(off, 0);
+    // Zeile 2
+    fscanf(fp, "%lu %lu linear %63s %lu", &s, &l, dev, &off);
+    EXPECT_UINT64(s, start);
+    EXPECT_UINT64(l, length);
+    EXPECT_MAP_STR(dev, loop_dec);
+    EXPECT_UINT64(off, 0);
+    // Zeile 3
+    fscanf(fp, "%lu %lu linear %63s %lu", &s, &l, dev, &off);
+    EXPECT_UINT64(s, start + length);
+    EXPECT_MAP_STR(dev, loop_orig);
+    EXPECT_UINT64(off, start + length);
+    fclose(fp);
+    unlink(map_path);
+    rmdir(tmpdir);
+    printf("[OK] create_mapping_file() Tests bestanden.\n");
+}
+
+// ------- setup_loop_device() -------
+#include "loop_device.c"
+void test_setup_loop_device(void)
+{
+    printf("Teste setup_loop_device()...\n");
+    char loop_path[64];
+    // Erwarteter Fehler für nicht existente Datei
+    EXPECT_INT(setup_loop_device("/nonexistent/file", loop_path, sizeof(loop_path)), 0);
+    printf("[OK] setup_loop_device() Tests bestanden.\n");
+}
+
+// ------- convert_ewf_to_raw() -------
+#include "image_converter.c"
+void test_convert_ewf_to_raw(void)
+{
+    printf("Teste convert_ewf_to_raw()...\n");
+    // fehler für nicht existentes Verzeichnis
+    EXPECT_INT(convert_ewf_to_raw("/no/such/dir", "/no/xmount"), 0);
+    printf("[OK] convert_ewf_to_raw() Tests bestanden.\n");
+}
+
+// ------- run_dislocker() -------
+#include "../src/dislocker_runner.c"
+void test_run_dislocker(void)
+{
+    printf("Teste run_dislocker()...\n");
+    // Expected failure for nonexistent image
+    EXPECT_INT(run_dislocker("/no/file", 0, "key", "/no/out"), 0);
+    printf("[OK] run_dislocker() Tests bestanden.\n");
+}
+
+// ------- setup_dm_device() -------
+#include "mapper.c" // setup_dm_device in mapper.c
+void test_setup_dm_device(void)
+{
+    printf("Teste setup_dm_device()...\n");
+    // Temporary dmsetup.txt
+    char tmpfile[] = "/tmp/testdmXXXXXX";
+    int fd = mkstemp(tmpfile);
+    close(fd);
+    FILE *f = fopen(tmpfile, "w");
+    fprintf(f, "dummy");
+    fclose(f);
+    EXPECT_INT(setup_dm_device(dirname(strdup(tmpfile))), 0);
+    unlink(tmpfile);
+    printf("[OK] setup_dm_device() Tests bestanden.\n");
+}
+
+int main(void)
+{
+    test_get_extension();
+    test_parse_bdp_line();
+    test_create_mapping_file();
+    test_setup_loop_device();
+    test_convert_ewf_to_raw();
+    test_run_dislocker();
+    test_setup_dm_device();
+    printf("\n[ALL OK] Alle Tests erfolgreich bestanden.\n");
+    return 0;
+}
