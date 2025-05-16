@@ -9,6 +9,7 @@
         "forensic.h": "c",
         "mount_selector.h": "c",
         "stdio.h": "c",
-        "inttypes.h": "c"
+        "inttypes.h": "c",
+        "stddef.h": "c"
     }
 }

@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
            (unsigned long long)bdp_info.length);
 
     {
-        char mmls_cmd[1024];
+        char mmls_cmd[2048];
         snprintf(mmls_cmd, sizeof(mmls_cmd),
                  "mmls -i raw %s", raw_image_path);
         printf("[*] mmls-Partitionstabelle:\n");
