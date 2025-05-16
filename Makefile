@@ -9,7 +9,6 @@ SRC = src/main.c \
       src/dislocker_runner.c \
       src/loop_device.c \
       src/mapper.c \
-      src/imager.c
 
 OBJ = $(SRC:.c=.o)
 

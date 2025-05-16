@@ -1,6 +1,6 @@
 # ForensiCUnlock
 
-**ForensiCUnlock** ist ein spezialisiertes C-basiertes Tool zur automatisierten Entschlüsselung von BitLocker-Partitionen in forensischen Images. Es analysiert das Beweismittel, identifiziert automatisch die Basic Data Partition (BDP), entschlüsselt sie mit dislocker, führt ein Device-Mapping durch und bereitet das Image für weitere Analyse vor – alles vollständig nachvollziehbar und modular.
+**ForensiCUnlock** ist ein spezialisiertes C-basiertes Tool zur automatisierten Entschlüsselung von BitLocker-Partitionen in forensischen Images. Es analysiert das Beweismittel, identifiziert automatisch die Basic Data Partition (BDP), entschlüsselt sie mit dislocker, richtet ein Device-Mapper-Device ein und stellt das entschlüsselte, gemergte Image als Blockgerät zur Verfügung – alles vollständig nachvollziehbar und modular.
 
 ---
 
@@ -8,10 +8,10 @@
 
 ForensiCUnlock automatisiert folgende forensische Entschlüsselungs- und Analyseprozesse:
 
-- Automatisches Mounten eines physischen Geräts (z. B. `/dev/sdb1`)
-- Scannen des Mountpunkts nach `.E01` / `.ewf`-Dateien
+- Automatisches Mounten eines physischen Geräts (z. B. `/dev/sdb1`) oder direkt eines Image-Files (`.ewf`, `.E01`, `.dd`, `.raw`)
+- Scannen des Mountpunkts nach `.E01` / `.ewf`-Dateien und/oder Mount per Loop-Device für Roh-Images
 - Konvertierung von `.E01`/`.ewf` → `.dd` (RAW) via `xmount`
-- Analyse der Partitionstabelle via `mmls` und Extraktion der BitLocker-BDP
+- Analyse der Partitionstabelle via `mmls` oder `parted` und Extraktion der BitLocker-BDP
 - Entschlüsselung der BitLocker-Partition mittels `dislocker`
 - Setup von Loop-Devices (original + entschlüsselt)
 - Erstellung eines Mappings in `dmsetup.txt`
@@ -22,21 +22,21 @@ ForensiCUnlock automatisiert folgende forensische Entschlüsselungs- und Analyse
 
 ## 🧩 Modulübersicht
 
-| Modul               | Funktion                                                                 |
-|---------------------|--------------------------------------------------------------------------|
-| `mount_selector`    | Mountet Gerät und sucht automatisch nach `.E01` / `.ewf`-Dateien         |
-| `image_converter`   | Führt `xmount` zur Konvertierung von EWF → RAW durch                     |
-| `partition_parser`  | Analysiert das Image mit `mmls` und erkennt automatisch die BDP          |
-| `dislocker_runner`  | Führt Entschlüsselung via `dislocker` mit Start-Offset durch             |
-| `loop_device`       | Erstellt `loop`-Geräte aus den relevanten Image-Dateien                  |
-| `mapper`            | Erstellt Mapping-Datei (`dmsetup.txt`) und setzt `/dev/mapper/merged`    |
-| `main.c`            | Zentrale Steuerung mit Übergabe aller Argumente                          |
+| Modul              | Funktion                                                                          |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `mount_selector`   | Mountet Beweismittel und unterscheidet EWF-Container, Roh-Image oder Block-Device |
+| `image_converter`  | Führt `xmount` zur Konvertierung von EWF → RAW durch                              |
+| `partition_parser` | Analysiert das Image mit `parted` oder `mmls` und erkennt automatisch die BDP     |
+| `dislocker_runner` | Führt Entschlüsselung via `dislocker` mit Start-Offset durch                      |
+| `loop_device`      | Erstellt `loop`-Geräte aus den relevanten Image-Dateien                           |
+| `mapper`           | Erstellt Mapping-Datei (`dmsetup.txt`) und setzt `/dev/mapper/merged`             |
+| `main.c`           | Zentrale Steuerung mit Übergabe aller Argumente                                   |
 
 ---
 
 ## ⚙️ Installation
 
-### 1. Lokale Installation unter Kali Linux (oder Debian-basiert)
+### 1. Lokale Installation unter Debian-basierten Systemen
 
 ```bash
 git clone https://github.com/dein-benutzer/ForensiCUnlock.git
@@ -51,7 +51,7 @@ chmod +x scripts/install.sh
 docker build -t forensicunlock .
 ```
 
-Beispielausführung:
+Beispielausführung im Container:
 
 ```bash
 ./scripts/run-docker.sh /dev/sdb2 "BITLOCKER-KEY" /mnt/output/run_case01
@@ -67,56 +67,72 @@ Beispielausführung:
 sudo ./forensic_unlock /dev/sdb2 "BITLOCKER-KEY" /mnt/output/run_case01
 ```
 
-Das Tool erstellt:
+Das Tool erstellt folgende Struktur:
 
-- `/mnt/output/run_case01/xmount/image.dd`
-- `/mnt/output/run_case01/bitlocker/dislocker-file`
-- `/mnt/output/run_case01/dmsetup.txt`
-- `/dev/mapper/merged` ← virtuelles, entschlüsseltes Image zur weiteren Analyse
+```text
+/mnt/output/run_case01/
+├── bitlocker/
+│   └── dislocker-file      # entschlüsselter Block-Container
+├── xmount/
+│   └── image.dd            # konvertiertes Roh-Image
+├── dmsetup.txt             # Device-Mapper-Konfiguration
+```
+
+Nach Abschluss existiert das virtuelle, entschlüsselte Blockgerät:
+
+```bash
+ls -l /dev/mapper/merged
+# /dev/mapper/merged → Zugriff auf das vollständige, entschlüsselte Image
+```
+
+Falls du das Image zur weiteren Analyse als Datei sichern möchtest:
+
+```bash
+sudo dd if=/dev/mapper/merged of=/mnt/output/run_case01/merged_image.dd bs=1M status=progress
+```
 
 ---
 
-## 📦 Ausgabeordnerstruktur
+## 📋 Ausgabeordnerstruktur
 
 Alle relevanten Daten befinden sich im `output_folder`, den du selbst als Argument angibst:
 
-```bash
-mnt/output/run_case01/
+```text
+/mnt/output/run_case01/
 ├── bitlocker/
 │   └── dislocker-file
 ├── xmount/
 │   └── image.dd
-├── dmsetup.txt
+└── dmsetup.txt
 ```
 
 ---
 
 ## 📋 Beispiel-Szenario: Analyse eines EWF-Beweismittels
 
-1. Du erhältst ein `.E01`-Image auf `/dev/sdb1`
-2. Starte das Tool mit:
-
-```bash
-sudo ./forensic_unlock /dev/sdb1 MYKEY123 /mnt/output/run_case01
-```
-
-3. ForensiCUnlock führt automatisch durch:
-   - Mount von `/dev/sdb1`
-   - Konvertierung `.E01` → `.dd`
-   - Partitionserkennung via `mmls`
-   - Entschlüsselung
+1. Du erhältst ein `.E01`-Image auf einem Datenträger oder als Datei.
+2. Starte das Tool:
+   ```bash
+   sudo ./forensic_unlock /path/to/image.E01 MYKEY123 /mnt/output/run_case01
+   ```
+3. Ablauf:
+   - Mount von Beweismittel (ewfmount oder Loop-Mount)
+   - `.E01` → `.dd`-Konvertierung
+   - Partitionserkennung (Start & Länge der BDP)
+   - BitLocker-Entschlüsselung
    - Mapping & Merge
-
-4. Ergebnis: Du hast ein analysierbares, gemapptes, entschlüsseltes Image unter `/dev/mapper/merged`
+4. Ergebnis:
+   - Virtuelles Device `/dev/mapper/merged` mit vollständigem, entschlüsseltem Image
+   - Bei Bedarf Datei-Export via `dd if=/dev/mapper/merged of=...`
 
 ---
 
 ## 🔎 Hinweise
 
-- Nur unter **Linux** lauffähig (getestet unter Kali)
-- Root-/`sudo`-Rechte erforderlich
-- Alle temporären Daten landen im gewählten `output_folder` (pro Fall isoliert)
-- Kein Cleanup notwendig – Arbeitsordner ist bereits trennscharf
+- Nur unter **Linux** lauffähig (getestet unter Debian/Kali).
+- Root-/`sudo`-Rechte erforderlich.
+- Alle temporären Daten landen im gewählten `output_folder` (pro Fall isoliert).
+- Kein separater Cleanup nötig – Arbeitsordner ist bereits trennscharf.
 
 ---
 
