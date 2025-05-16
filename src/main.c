@@ -4,14 +4,12 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include "forensic.h"
 #include "mount_selector.h"
 #include "image_converter.h"
 #include "partition_parser.h"
 #include "dislocker_runner.h"
 #include "loop_device.h"
 #include "mapper.h"
-#include "imager.h"
 
 int main(int argc, char *argv[])
 {
@@ -98,7 +96,6 @@ int main(int argc, char *argv[])
            (unsigned long long)bdp_info.start,
            (unsigned long long)bdp_info.length);
 
-    // --- NEU: Bereich anzeigen und mmls-Tabelle ausgeben ---
     printf("[*] Zu prüfender Bereich → Offset: %llu Sektoren, Länge: %llu Sektoren\n",
            (unsigned long long)bdp_info.start,
            (unsigned long long)bdp_info.length);
@@ -110,7 +107,6 @@ int main(int argc, char *argv[])
         printf("[*] mmls-Partitionstabelle:\n");
         system(mmls_cmd);
     }
-    // -------------------------------------------------------
 
     printf("[*] Kontrolliere mmls-Tabelle und bestätige mit ENTER...\n");
     system("read -p '>>> Weiter mit ENTER...'");
