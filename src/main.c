@@ -13,13 +13,16 @@
 #include "mapper.h"
 #include "imager.h"
 
-int main(int argc, char *argv[]) {
-    if (geteuid() != 0 || getenv("SUDO_USER") == NULL) {
+int main(int argc, char *argv[])
+{
+    if (geteuid() != 0 || getenv("SUDO_USER") == NULL)
+    {
         fprintf(stderr, "[!] Fehler: Bitte führe das Programm mit 'sudo' aus.\n");
         return 1;
     }
 
-    if (argc < 4) {
+    if (argc < 4)
+    {
         fprintf(stderr, "Usage: %s <device|image> <bitlocker_key> <output_folder>\n", argv[0]);
         return 1;
     }
@@ -45,19 +48,22 @@ int main(int argc, char *argv[]) {
     mkdir(output_folder, 0755);
 
     printf("[*] Mountvorgang für Gerät: %s\n", device);
-    if (!auto_mount_and_find_ewf(device, selected_image_dir, sizeof(selected_image_dir))) {
+    if (!auto_mount_and_find_ewf(device, selected_image_dir, sizeof(selected_image_dir)))
+    {
         fprintf(stderr, "[!] Fehler beim automatischen Mounten des Beweismittels.\n");
         return 1;
     }
-
     printf("[*] Gefundenes EWF-Verzeichnis: %s\n", selected_image_dir);
 
     int has_ewf = 0;
     DIR *dir = opendir(selected_image_dir);
     struct dirent *entry;
-    if (dir) {
-        while ((entry = readdir(dir)) != NULL) {
-            if (strstr(entry->d_name, ".E01") || strstr(entry->d_name, ".ewf")) {
+    if (dir)
+    {
+        while ((entry = readdir(dir)) != NULL)
+        {
+            if (strstr(entry->d_name, ".E01") || strstr(entry->d_name, ".ewf"))
+            {
                 has_ewf = 1;
                 break;
             }
@@ -65,31 +71,53 @@ int main(int argc, char *argv[]) {
         closedir(dir);
     }
 
-    if (has_ewf) {
+    if (has_ewf)
+    {
         printf("[*] EWF-Datei erkannt. Starte Konvertierung...\n");
-        if (!convert_ewf_to_raw(selected_image_dir, xmount_path)) {
+        if (!convert_ewf_to_raw(selected_image_dir, xmount_path))
+        {
             fprintf(stderr, "[!] Fehler: Konvertierung nach RAW fehlgeschlagen.\n");
             return 1;
         }
-    } else {
+    }
+    else
+    {
         printf("[*] Keine EWF-Datei erkannt. Verwende vorhandenes RAW: %s\n", raw_image_path);
     }
 
     printf("[*] Analysiere Partitionstabelle...\n");
     PartitionInfo bdp_info;
-    if (!find_bdp_partition(raw_image_path, &bdp_info)) {
+    if (!find_bdp_partition(raw_image_path, &bdp_info))
+    {
         fprintf(stderr, "[!] Fehler beim Parsen der BDP-Partition.\n");
         return 1;
     }
 
     printf("[*] BDP erkannt: Slot %d, Start: %llu, Länge: %llu\n",
-           bdp_info.slot, (unsigned long long)bdp_info.start, (unsigned long long)bdp_info.length);
+           bdp_info.slot,
+           (unsigned long long)bdp_info.start,
+           (unsigned long long)bdp_info.length);
+
+    // --- NEU: Bereich anzeigen und mmls-Tabelle ausgeben ---
+    printf("[*] Zu prüfender Bereich → Offset: %llu Sektoren, Länge: %llu Sektoren\n",
+           (unsigned long long)bdp_info.start,
+           (unsigned long long)bdp_info.length);
+
+    {
+        char mmls_cmd[1024];
+        snprintf(mmls_cmd, sizeof(mmls_cmd),
+                 "mmls -i raw %s", raw_image_path);
+        printf("[*] mmls-Partitionstabelle:\n");
+        system(mmls_cmd);
+    }
+    // -------------------------------------------------------
 
     printf("[*] Kontrolliere mmls-Tabelle und bestätige mit ENTER...\n");
     system("read -p '>>> Weiter mit ENTER...'");
 
     printf("[*] Entschlüsselung der BitLocker-Partition gestartet...\n");
-    if (!run_dislocker(raw_image_path, bdp_info.start, bitlocker_key, bitlocker_path)) {
+    if (!run_dislocker(raw_image_path, bdp_info.start, bitlocker_key, bitlocker_path))
+    {
         fprintf(stderr, "[!] Fehler bei der BitLocker-Entschlüsselung.\n");
         return 1;
     }
@@ -97,12 +125,14 @@ int main(int argc, char *argv[]) {
     char loop_decrypted[64];
     char loop_original[64];
 
-    if (!setup_loop_device(dislocker_file, loop_decrypted, sizeof(loop_decrypted))) {
+    if (!setup_loop_device(dislocker_file, loop_decrypted, sizeof(loop_decrypted)))
+    {
         fprintf(stderr, "[!] Fehler beim Einrichten des Loop-Devices (dislocker).\n");
         return 1;
     }
 
-    if (!setup_loop_device(raw_image_path, loop_original, sizeof(loop_original))) {
+    if (!setup_loop_device(raw_image_path, loop_original, sizeof(loop_original)))
+    {
         fprintf(stderr, "[!] Fehler beim Einrichten des Loop-Devices (RAW).\n");
         return 1;
     }
@@ -110,12 +140,14 @@ int main(int argc, char *argv[]) {
     printf("[*] Loop-Device (entschlüsselt): %s\n", loop_decrypted);
     printf("[*] Loop-Device (original):     %s\n", loop_original);
 
-    if (!create_mapping_file(loop_original, loop_decrypted, bdp_info.start, bdp_info.length, output_folder)) {
+    if (!create_mapping_file(loop_original, loop_decrypted, bdp_info.start, bdp_info.length, output_folder))
+    {
         fprintf(stderr, "[!] Fehler beim Schreiben der Mapping-Datei.\n");
         return 1;
     }
 
-    if (!setup_dm_device(output_folder)) {
+    if (!setup_dm_device(output_folder))
+    {
         fprintf(stderr, "[!] Fehler bei der Erstellung des gemergten Devices.\n");
         return 1;
     }
