@@ -7,6 +7,8 @@
         "stdlib.h": "c",
         "imager.h": "c",
         "forensic.h": "c",
-        "mount_selector.h": "c"
+        "mount_selector.h": "c",
+        "stdio.h": "c",
+        "inttypes.h": "c"
     }
 }
