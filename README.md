@@ -8,8 +8,6 @@
 
 ForensiCUnlock automatisiert folgende forensische Entschlüsselungs- und Analyseprozesse:
 
-- Automatisches Mounten eines physischen Geräts (z. B. `/dev/sdb1`) oder direkt eines Image-Files (`.ewf`, `.E01`, `.dd`, `.raw`)
-- Scannen des Mountpunkts nach `.E01` / `.ewf`-Dateien und/oder Mount per Loop-Device für Roh-Images
 - Konvertierung von `.E01`/`.ewf` → `.dd` (RAW) via `xmount`
 - Analyse der Partitionstabelle via `mmls` oder `parted` und Extraktion der BitLocker-BDP
 - Entschlüsselung der BitLocker-Partition mittels `dislocker`
