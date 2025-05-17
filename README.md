@@ -130,6 +130,6 @@ Alle relevanten Daten befinden sich im `output_folder`, den du selbst als Argume
 - Nur unter **Linux** lauffähig (getestet unter Debian/Kali).
 - Root-/`sudo`-Rechte erforderlich.
 - Alle temporären Daten landen im gewählten `output_folder` (pro Fall isoliert).
-- Kein separater Cleanup nötig – Arbeitsordner ist bereits trennscharf.
+- Kein separater Cleanup nötig. Arbeitsordner ist bereits trennscharf.
 
 ---
