@@ -13,12 +13,41 @@
 #include "mapper.h"
 
 // Helfer: Dateiendung extrahieren
+/**
+ * Extrahiert die Dateiendung aus einem Pfad.
+ *
+ * @param path  Dateipfad, aus dem die Endung ermittelt werden soll.
+ * @return      Zeiger auf die Extensions-Part („.E01“, „.ewf“ etc.) oder auf
+ *              einen leeren String, falls keine Endung gefunden wurde.
+ */
 static const char *get_extension(const char *path)
 {
     const char *dot = strrchr(path, '.');
     return (dot && dot != path) ? dot : "";
 }
 
+/**
+ * Hauptprogramm für das automatische Entschlüsseln und Mounten eines
+ * BitLocker-Volumes in EWF- oder RAW-Format.
+ *
+ * Usage: ./programm <device|image> <bitlocker_key> <output_folder>
+ *
+ * Schritte:
+ *  1. Überprüft, ob das Programm mit Root-Rechten ausgeführt wird.
+ *  2. Unterscheidung zwischen EWF-Container und RAW-Image.
+ *  3. Konvertierung und Einhängen des Images.
+ *  4. Erkennung der BitLocker-Datenpartition (BDP).
+ *  5. Ausführen von dislocker zur Entschlüsselung.
+ *  6. Anlegen von Loop-Devices für Original- und entschlüsseltes Volume.
+ *  7. Erzeugen und Aktivieren eines Device-Mapper-Geräts.
+ *
+ * @param argc  Anzahl der übergebenen Argumente.
+ * @param argv  Array der Argumentstrings:
+ *              argv[1]: Pfad zum Device oder Image,
+ *              argv[2]: BitLocker-Schlüssel,
+ *              argv[3]: Ausgabeverzeichnis.
+ * @return      0 bei Erfolg, ungleich 0 bei Fehlern.
+ */
 int main(int argc, char *argv[])
 {
     if (geteuid() != 0 || getenv("SUDO_USER") == NULL)
@@ -141,7 +170,7 @@ int main(int argc, char *argv[])
     }
 
     // Abschluss
-    printf("[✔] Vorgang abgeschlossen. Gemergtes Device: /dev/mapper/merged\n");
+    printf("[*] Vorgang abgeschlossen. Gemergtes Device: /dev/mapper/merged\n");
     printf("Arbeitsverzeichnis: %s\n", output_folder);
     return 0;
 }
