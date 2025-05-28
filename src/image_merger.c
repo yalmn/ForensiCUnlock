@@ -2,10 +2,10 @@
 
 #include "image_merger.h"
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h>     // popen, pclose, system
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
+#include <unistd.h>     // unlink
 
 int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const PartitionInfo *bdp_info, const char *output_dir)
 {
@@ -38,7 +38,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
         return 0;
     }
 
-    uint64_t total_sectors = 0;
+    unsigned long long total_sectors = 0;
     if (fscanf(fp, "%llu", &total_sectors) != 1)
     {
         perror("[!] Fehler beim Parsen der Imagegröße");
@@ -77,7 +77,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
     printf("[*] Merging nach: %s\n", merged_path);
     if (system(cmd_merge) != 0) return 0;
 
-    // 7. Cleanup: Nur merged.dd und Originalimage bleiben erhalten
+    // 7. Cleanup: Nur merged.dd und ursprüngliches Image bleiben erhalten
     char cmd_cleanup[1024];
     snprintf(cmd_cleanup, sizeof(cmd_cleanup),
              "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
