@@ -1,11 +1,11 @@
 // src/image_merger.c
-
+#define _GNU_SOURCE
 #include "image_merger.h"
 #include <stdio.h>
-#include <stdlib.h>     // popen, pclose, system
+#include <stdlib.h>     
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>     // unlink
+#include <unistd.h>     
 
 int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const PartitionInfo *bdp_info, const char *output_dir)
 {
