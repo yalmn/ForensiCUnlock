@@ -80,23 +80,22 @@ int main(int argc, char *argv[])
     }
 
     uint64_t bdp_end = bdp_info.start + bdp_info.length - 1;
-
     printf("[*] BitLocker-Partition erkannt:\n");
-    printf("    - Slot:      %d\n", bdp_info.slot);
-    printf("    - Start:     %llu\n", (unsigned long long)bdp_info.start);
-    printf("    - Länge:     %llu Sektoren\n", (unsigned long long)bdp_info.length);
-    printf("    - Ende:      %llu\n", (unsigned long long)bdp_end);
+    printf("    - Slot:  %d\n", bdp_info.slot);
+    printf("    - Start: %llu\n", (unsigned long long)bdp_info.start);
+    printf("    - Länge: %llu Sektoren\n", (unsigned long long)bdp_info.length);
+    printf("    - Ende:  %llu\n", (unsigned long long)bdp_end);
 
-    // Kontrollausgabe: mmls-Tabelle und manuelle Bestätigung
-    printf("\n[*] Überprüfe Partitionstabelle mit mmls:\n");
+    // mmls zur Kontrolle anzeigen
     char mmls_cmd[2048];
     snprintf(mmls_cmd, sizeof(mmls_cmd), "mmls -i raw '%s'", raw_image_path);
+    printf("\n[*] Partitionstabelle (mmls):\n");
     system(mmls_cmd);
 
-    printf("\n[?] Bestätige, dass die BDP-Sektoren korrekt sind. Drücke ENTER zum Fortfahren...\n");
+    printf("\n[?] Prüfe BDP-Start und Länge. Drücke ENTER zum Fortfahren...\n");
     system("read -p ''");
 
-    // BitLocker-Entschlüsselung
+    // Dislocker ausführen
     printf("[*] Starte BitLocker-Entschlüsselung...\n");
     if (!run_dislocker(raw_image_path, bdp_info.start, bitlocker_key, bitlocker_dir))
     {
