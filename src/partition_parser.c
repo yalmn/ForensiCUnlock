@@ -1,4 +1,3 @@
-// partition_parser.c
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,39 +9,53 @@
 int find_bdp_partition(const char *image_path, PartitionInfo *info)
 {
     char cmd[512];
-    // Machine-Mode, Sektor-Einheiten
-    snprintf(cmd, sizeof(cmd),
-             "parted -m -s %s unit s print", image_path);
+    snprintf(cmd, sizeof(cmd), "mmls -i raw '%s'", image_path);
 
     FILE *fp = popen(cmd, "r");
     if (!fp)
     {
-        perror("[!] Fehler beim Ausführen von parted");
+        perror("[!] Fehler beim Ausführen von mmls");
         return 0;
     }
 
-    char line[256];
+    char line[512];
     int found = 0;
+
     while (fgets(line, sizeof(line), fp))
     {
-        // Kopfzeilen (Pfad) überspringen
-        if (line[0] == '/' || strchr(line, ':') == NULL)
-            continue;
-
-        int slot;
-        uint64_t start_s, end_s;
-        char fs[32];
-
-        // slot:start<s>:end<s>:fs:...
-        if (sscanf(line, "%d:%" SCNu64 "s:%" SCNu64 "s:%31[^:]:",
-                   &slot, &start_s, &end_s, fs) == 4)
+        if (strstr(line, "Basic data partition"))
         {
-            // NTFS oder Basic data?
-            if (strcasecmp(fs, "ntfs") == 0 || strcasecmp(fs, "basic data") == 0)
+            // Slotnummer ignorieren – wir holen nur Start/Ende
+            char *start_str = strtok(line, " \t"); // Slot (z.B. "006:")
+            start_str = strtok(NULL, " \t"); // ID (z.B. "002")
+            start_str = strtok(NULL, " \t"); // Start
+
+            char *end_str = strtok(NULL, " \t");   // End
+            if (start_str && end_str)
             {
-                info->slot = slot;
-                info->start = start_s;
-                info->length = end_s - start_s + 1;
+                uint64_t start = strtoull(start_str, NULL, 10);
+                uint64_t end = strtoull(end_str, NULL, 10);
+
+                info->slot = -1; // nicht bekannt
+                info->start = start;
+                info->length = end - start + 1;
+
+                // Save BDP info
+                FILE *out = fopen("./bdp.info", "w");
+                if (out)
+                {
+                    fprintf(out, "start=%llu\nend=%llu\nlength=%llu\n",
+                            (unsigned long long)start,
+                            (unsigned long long)end,
+                            (unsigned long long)(end - start + 1));
+                    fclose(out);
+                    printf("[*] Partitioninfo gespeichert in: ./bdp.info\n");
+                }
+
+                printf("[*] BDP erkannt über mmls: Start=%llu Ende=%llu Länge=%llu\n",
+                       (unsigned long long)start,
+                       (unsigned long long)end,
+                       (unsigned long long)(end - start + 1));
                 found = 1;
                 break;
             }
@@ -53,7 +66,7 @@ int find_bdp_partition(const char *image_path, PartitionInfo *info)
 
     if (!found)
     {
-        fprintf(stderr, "[!] Keine NTFS/BDP-Partition gefunden.\n");
+        fprintf(stderr, "[!] Keine 'Basic data partition' über mmls gefunden.\n");
         return 0;
     }
 
