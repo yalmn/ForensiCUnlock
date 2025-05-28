@@ -1,11 +1,10 @@
-// src/image_merger.c
 #define _GNU_SOURCE
 #include "image_merger.h"
 #include <stdio.h>
-#include <stdlib.h>     
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>     
+#include <unistd.h>
 
 int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const PartitionInfo *bdp_info, const char *output_dir)
 {
@@ -69,19 +68,27 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
     if (tail_len > 0 && system(cmd3) != 0) return 0;
 
     // 6. Merge zu merged.dd
-    char cmd_merge[1024];
-    snprintf(cmd_merge, sizeof(cmd_merge),
-             "cat '%s' '%s' '%s' > '%s'",
-             part1_path, part2_path, part3_path, merged_path);
+    char cmd_merge[2048];
+    int merge_len = snprintf(cmd_merge, sizeof(cmd_merge),
+         "cat '%s' '%s' '%s' > '%s'",
+         part1_path, part2_path, part3_path, merged_path);
+    if (merge_len >= sizeof(cmd_merge)) {
+        fprintf(stderr, "[!] Merge-Befehl zu lang, wird abgeschnitten.\n");
+        return 0;
+    }
 
     printf("[*] Merging nach: %s\n", merged_path);
     if (system(cmd_merge) != 0) return 0;
 
     // 7. Cleanup: Nur merged.dd und ursprüngliches Image bleiben erhalten
-    char cmd_cleanup[1024];
-    snprintf(cmd_cleanup, sizeof(cmd_cleanup),
-             "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
-             part1_path, part2_path, part3_path, dislocker_file, output_dir, output_dir);
+    char cmd_cleanup[2048];
+    int clean_len = snprintf(cmd_cleanup, sizeof(cmd_cleanup),
+         "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
+         part1_path, part2_path, part3_path, dislocker_file, output_dir, output_dir);
+    if (clean_len >= sizeof(cmd_cleanup)) {
+        fprintf(stderr, "[!] Cleanup-Befehl zu lang, wird abgeschnitten.\n");
+        return 0;
+    }
 
     printf("[*] Bereinige temporäre Dateien...\n");
     system(cmd_cleanup);
