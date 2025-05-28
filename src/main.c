@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 
     if (argc != 4)
     {
-        fprintf(stderr, "Usage: %s <device|image> <bitlocker_key> <output_folder>\n", argv[0]);
+        fprintf(stderr, "Verwendung: %s <image|device> <bitlocker_key> <ausgabeordner>\n", argv[0]);
         return 1;
     }
 
@@ -44,14 +44,14 @@ int main(int argc, char *argv[])
     snprintf(xmount_dir, sizeof(xmount_dir), "%s/xmount", output_folder);
     snprintf(bitlocker_dir, sizeof(bitlocker_dir), "%s/bitlocker", output_folder);
 
-    printf("[*] Arbeitsordner: %s\n", output_folder);
+    printf("[*] Arbeitsverzeichnis: %s\n", output_folder);
     if (mkdir(output_folder, 0755) != 0 && errno != EEXIST)
     {
-        perror("[!] Fehler beim Anlegen des Arbeitsordners");
+        perror("[!] Fehler beim Erstellen des Arbeitsverzeichnisses");
         return 1;
     }
 
-    // EWF-Container oder RAW-Image unterscheiden
+    // Eingabeformat ermitteln
     const char *ext = get_extension(input_image);
     if (strcasecmp(ext, ".E01") == 0 || strcasecmp(ext, ".ewf") == 0)
     {
@@ -71,32 +71,31 @@ int main(int argc, char *argv[])
     }
 
     // Partitionserkennung
-    printf("[*] Analysiere Partitionstabelle...\n");
+    printf("[*] Untersuche Partitionstabelle...\n");
     PartitionInfo bdp_info;
     if (!find_bdp_partition(raw_image_path, &bdp_info))
     {
-        fprintf(stderr, "[!] Fehler: BDP-Partition nicht gefunden.\n");
+        fprintf(stderr, "[!] Fehler: Basic Data Partition (BDP) konnte nicht erkannt werden.\n");
         return 1;
     }
 
     uint64_t bdp_end = bdp_info.start + bdp_info.length - 1;
-    printf("[*] BitLocker-Partition erkannt:\n");
-    printf("    - Slot:  %d\n", bdp_info.slot);
-    printf("    - Start: %llu\n", (unsigned long long)bdp_info.start);
-    printf("    - Länge: %llu Sektoren\n", (unsigned long long)bdp_info.length);
-    printf("    - Ende:  %llu\n", (unsigned long long)bdp_end);
+    printf("[*] BDP erkannt:\n");
+    printf("    → Startsektor : %llu\n", (unsigned long long)bdp_info.start);
+    printf("    → Länge       : %llu Sektoren\n", (unsigned long long)bdp_info.length);
+    printf("    → Endsektor   : %llu\n", (unsigned long long)bdp_end);
 
     // mmls zur Kontrolle anzeigen
     char mmls_cmd[2048];
     snprintf(mmls_cmd, sizeof(mmls_cmd), "mmls -i raw '%s'", raw_image_path);
-    printf("\n[*] Partitionstabelle (mmls):\n");
+    printf("\n[*] Partitionstabelle zur Kontrolle (mmls):\n");
     system(mmls_cmd);
 
-    printf("\n[?] Prüfe BDP-Start und Länge. Drücke ENTER zum Fortfahren...\n");
-    system("read -p ''");
+    printf("\n[?] Prüfe die Angaben. Drücke ENTER zum Fortfahren...\n");
+    getc(stdin);
 
     // Dislocker ausführen
-    printf("[*] Starte BitLocker-Entschlüsselung...\n");
+    printf("[*] Starte Entschlüsselung mit Dislocker...\n");
     if (!run_dislocker(raw_image_path, bdp_info.start, bitlocker_key, bitlocker_dir))
     {
         fprintf(stderr, "[!] Fehler bei der BitLocker-Entschlüsselung.\n");
@@ -105,13 +104,14 @@ int main(int argc, char *argv[])
     snprintf(dislocker_file, sizeof(dislocker_file), "%s/dislocker-file", bitlocker_dir);
 
     // Merge und Cleanup
+    printf("[*] Erzeuge entschlüsseltes Abbild (merged.dd)...\n");
     if (!merge_and_cleanup(raw_image_path, dislocker_file, &bdp_info, output_folder))
     {
-        fprintf(stderr, "[!] Fehler beim Mergen der Partitionen.\n");
+        fprintf(stderr, "[!] Fehler beim Zusammenführen der Datenbereiche.\n");
         return 1;
     }
 
-    printf("[+] Vorgang abgeschlossen.\n");
-    printf("[+] Ausgabedatei: %s/merged.dd\n", output_folder);
+    printf("\n[+] Vorgang abgeschlossen\n");
+    printf("[+] Entschlüsseltes Image: \033[1;32m%s/merged.dd\033[0m\n", output_folder);
     return 0;
 }
