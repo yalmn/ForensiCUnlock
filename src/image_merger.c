@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 #include "image_merger.h"
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h>     // popen, pclose, system
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -69,7 +69,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
 
     // 6. Merge zu merged.dd
     char cmd_merge[2048];
-    int merge_len = snprintf(cmd_merge, sizeof(cmd_merge),
+    size_t merge_len = snprintf(cmd_merge, sizeof(cmd_merge),
          "cat '%s' '%s' '%s' > '%s'",
          part1_path, part2_path, part3_path, merged_path);
     if (merge_len >= sizeof(cmd_merge)) {
@@ -82,7 +82,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
 
     // 7. Cleanup: Nur merged.dd und ursprüngliches Image bleiben erhalten
     char cmd_cleanup[2048];
-    int clean_len = snprintf(cmd_cleanup, sizeof(cmd_cleanup),
+    size_t clean_len = snprintf(cmd_cleanup, sizeof(cmd_cleanup),
          "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
          part1_path, part2_path, part3_path, dislocker_file, output_dir, output_dir);
     if (clean_len >= sizeof(cmd_cleanup)) {
