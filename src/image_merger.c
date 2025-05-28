@@ -58,7 +58,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
              (unsigned long long)after_bdp,
              (unsigned long long)tail_len);
 
-    // 5. Führe alle drei dd-Befehle und cp aus
+    // 5. Führe dd- und cp-Befehle aus
     printf("[*] Erzeuge Partitionsteil 1...\n");
     if (system(cmd1) != 0) return 0;
 
@@ -68,7 +68,7 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
     printf("[*] Erzeuge Partitionsteil 3...\n");
     if (tail_len > 0 && system(cmd3) != 0) return 0;
 
-    // 6. Füge alles zusammen
+    // 6. Merge zu merged.dd
     char cmd_merge[1024];
     snprintf(cmd_merge, sizeof(cmd_merge),
              "cat '%s' '%s' '%s' > '%s'",
@@ -77,11 +77,11 @@ int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const P
     printf("[*] Merging nach: %s\n", merged_path);
     if (system(cmd_merge) != 0) return 0;
 
-    // 7. Entferne temporäre Dateien
+    // 7. Cleanup: Nur merged.dd und Originalimage bleiben erhalten
     char cmd_cleanup[1024];
     snprintf(cmd_cleanup, sizeof(cmd_cleanup),
-             "rm -f '%s' '%s' '%s' '%s/dislocker-file'",
-             part1_path, part2_path, part3_path, output_dir);
+             "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
+             part1_path, part2_path, part3_path, dislocker_file, output_dir, output_dir);
 
     printf("[*] Bereinige temporäre Dateien...\n");
     system(cmd_cleanup);
