@@ -1,22 +1,16 @@
 #!/bin/bash
 
-# Skript zum Installieren der Abhängigkeiten und Kompilieren der Anwendung
+echo "[*] Installiere benötigte Pakete (dislocker, xmount, sleuthkit, parted)..."
+sudo apt update
+sudo apt install -y dislocker xmount sleuthkit parted build-essential
 
-echo "[*] Installiere benötigte Abhängigkeiten (xmount, ewf-tools, dislocker)..."
-# Paketliste herunterladen und installieren:
-#  - xmount: zum Einhängen von Images
-#  - ewf-tools: zum Konvertieren von EWF-Containern
-#  - dislocker: zur BitLocker-Entschlüsselung
-#  - dmsetup: zum Erstellen von Device-Mapper-Devices
-#  - util-linux: enthält u. a. mount- und loop-Device-Tools
-sudo apt install -y xmount ewf-tools dislocker dmsetup util-linux
+echo "[*] Starte Build-Vorgang..."
+make clean && make
 
-echo "[*] Baue die Applikation..."
-# Ins Verzeichnis über dem Skript wechseln (Projekt-Root)
-cd ..
-# Alte Binär- und Objektdateien entfernen
-make clean
-# Quellcode kompilieren und Binär erzeugen
-make
-
-echo "[*] Installation abgeschlossen. Anwendung bereit unter ./forensic_unlock"
+if [[ -f forensic_unlock ]]; then
+    echo "[+] Build erfolgreich abgeschlossen."
+    echo "[+] Starte mit: sudo ./forensic_unlock <image> <key> <ausgabeverzeichnis>"
+else
+    echo "[!] Fehler beim Kompilieren von forensic_unlock."
+    exit 1
+fi
