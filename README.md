@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/ForensiCUnlock_Logo.png" alt="ForensiCUnlock Logo" height="150"/>
+  <img src="docs/ForensiCUnlock_Logo.png" alt="ForensiCUnlock Logo" height="500"/>
 </p>
 
 # ForensiCUnlock
