@@ -1,5 +1,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="docs/ForensiCUnlock_Logo.png" alt="ForensiCUnlock Logo" height="150"/>
+</p>
+
 # ForensiCUnlock
 
 **ForensiCUnlock** ist ein modulares C-Tool zur automatisierten Entschlüsselung forensischer BitLocker-Images. Es erkennt automatisch die relevante Partition, entschlüsselt diese mit `dislocker`, führt die Datenbereiche zusammen und entfernt danach alle temporären Artefakte – ideal für forensische Analysen und kompatibel mit WSL2.
