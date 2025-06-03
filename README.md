@@ -1,3 +1,5 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 # ForensiCUnlock
 
 **ForensiCUnlock** ist ein modulares C-Tool zur automatisierten Entschlüsselung forensischer BitLocker-Images. Es erkennt automatisch die relevante Partition, entschlüsselt diese mit `dislocker`, führt die Datenbereiche zusammen und entfernt danach alle temporären Artefakte – ideal für forensische Analysen und kompatibel mit WSL2.
@@ -41,7 +43,7 @@ sudo apt install dislocker ewf-tools sleuthkit xmount make gcc -y
 ### Projekt klonen & kompilieren
 
 ```bash
-git clone https://github.com/<dein-user>/ForensiCUnlock.git
+git clone https://github.com/yalmn/ForensiCUnlock.git
 cd ForensiCUnlock
 make
 ```
@@ -94,9 +96,8 @@ Wird kein Output-Ordner angegeben, erstellt das Tool automatisch:
 
 ## Lizenz
 
-MIT License – frei verwendbar, änderbar und weiterverteilbar. Siehe `LICENSE`.
+Dieses Projekt steht unter der [MIT License](LICENSE) © 2025 [yalmn](https://github.com/yalmn/)
 
----
 
 ## Release-Hinweis
 
