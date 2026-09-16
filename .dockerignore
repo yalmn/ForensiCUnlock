@@ -1,0 +1,6 @@
+tests/fixtures
+tests/work
+*.o
+forensic_unlock
+tests/unit_tests
+.git

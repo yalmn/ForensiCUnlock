@@ -6,42 +6,55 @@
 
 # ForensiCUnlock
 
-**ForensiCUnlock** ist ein modulares C-Tool zur automatisierten Entschlüsselung forensischer BitLocker-Images. Es erkennt automatisch die relevante Partition, entschlüsselt diese mit `dislocker`, führt die Datenbereiche zusammen und entfernt danach alle temporären Artefakte – ideal für forensische Analysen und kompatibel mit WSL2.
+**ForensiCUnlock** ist ein C-Tool für Linux und WSL2, das BitLocker-verschlüsselte Partitionen in forensischen Images entschlüsselt. Am Ende steht nicht nur die entschlüsselte Partition, sondern wieder ein vollständiges Datenträger-Image (`merged.dd`). Partitionstabelle und alle anderen Partitionen bleiben byte-genau erhalten, deshalb lässt sich das Ergebnis direkt in Autopsy, X-Ways oder The Sleuth Kit öffnen.
 
 ---
 
 ## Features
 
-- Automatische Partitionserkennung via `mmls` (NTFS / GPT / BDP)
-- Entschlüsselung von BitLocker-Partitionen mit `dislocker`
-- Konvertierung von `.E01`/`.ewf` zu RAW via `xmount`
-- Zusammenführung der Image-Segmente zu einem vollständigen `.dd`-Image via `cat`
-- Automatischer Cleanup – nur das Ziel-Image und Original bleiben erhalten
-- Isolierte Ausgabe in `run_<timestamp>` oder benutzerdefiniertem Ordner
+- Eingabe als RAW-Image (`.dd`, `.raw`, `.img`), EWF-Image (`.E01`, `.Ex01`, `.ewf`) oder Blockgerät (`/dev/sdX`)
+- EWF-Images mit beliebig vielen Segmenten (`.E01`, `.E02`, ... `.E99`, `.EAA`, ...), Vollständigkeit wird vorab geprüft
+- Erkennung der BitLocker-Partition über die Signatur im Volume-Header, unabhängig von Partitionsnamen oder -typ
+- GPT und MBR, 512- und 4096-Byte-Sektoren, BitLocker To Go
+- Auswahl, wenn mehrere BitLocker-Partitionen im Image liegen
+- Entschlüsselung read-only mit `dislocker`, das Original wird nie verändert
+- Zusammenführung direkt in eine Datei, ohne Zwischenkopien (Speicherbedarf etwa einmal die Imagegröße)
+- Sauberes Aufräumen, auch bei Fehlern oder Abbruch mit Ctrl+C: alle Mounts werden ausgehängt, Hilfsordner entfernt
+- Keine Shell-Aufrufe, Pfade und Schlüssel mit Leerzeichen oder Anführungszeichen sind unproblematisch
+
+---
+
+## Ablauf
+
+1. **EWF bereitstellen:** Bei `.E01` prüft das Tool die Segmente und hängt das Image mit `ewfmount` als RAW-Datei ein.
+2. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft.
+3. **Kontrolle:** Die gefundene Partition und die komplette Partitionstabelle werden angezeigt. Weiter geht es erst nach ENTER.
+4. **Entschlüsseln:** `dislocker` stellt die entschlüsselte Partition read-only als `dislocker-file` bereit.
+5. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach.
+6. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, die Hilfsordner gelöscht.
 
 ---
 
 ## Aufbau & Module
 
-| Modul              | Beschreibung                                                           |
-| ------------------ | ---------------------------------------------------------------------- |
-| `main.c`           | Einstiegspunkt, steuert alle Schritte über Argumente                  |
-| `mount_selector`   | Prüft EWF, .dd oder Blockgerät und mountet entsprechend               |
-| `image_converter`  | Konvertiert `.E01`/`.ewf` via `xmount` (falls nötig)                  |
-| `partition_parser` | Erkennt die BitLocker-BDP mit `mmls`                                  |
-| `dislocker_runner` | Entschlüsselt BDP mittels `dislocker` mit dynamischem Offset          |
-| `image_merger`     | Führt `cat`-Merge der Teile zu `merged.dd` durch                      |
-| `utils`            | Hilfsfunktionen (Verzeichnisse, Cleanup, Zeitstempel etc.)            |
+| Modul              | Aufgabe                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `main.c`           | Einstiegspunkt, Argumente, Ablaufsteuerung, Aufräumen und Ctrl+C        |
+| `exec_utils`       | Externe Programme ohne Shell starten, Verzeichnisse anlegen, Mounts prüfen und aushängen |
+| `image_converter`  | EWF-Segmente prüfen und das Image mit `ewfmount` einhängen              |
+| `partition_parser` | `mmls`-Ausgabe auswerten, Sektorgröße lesen, BitLocker-Signatur prüfen  |
+| `dislocker_runner` | `dislocker` mit dem passenden Byte-Offset aufrufen                      |
+| `image_merger`     | Imagegröße ermitteln und `merged.dd` blockweise schreiben               |
 
 ---
 
-## ⚙Installation
+## Installation
 
-### Voraussetzungen (Debian/Kali/WSL2)
+### Voraussetzungen (Debian, Ubuntu, Kali, WSL2)
 
 ```bash
 sudo apt update
-sudo apt install dislocker ewf-tools sleuthkit xmount make gcc -y
+sudo apt install build-essential dislocker ewf-tools sleuthkit fuse3 -y
 ```
 
 ### Projekt klonen & kompilieren
@@ -52,49 +65,95 @@ cd ForensiCUnlock
 make
 ```
 
+Alternativ erledigt `./scripts/install.sh` beides.
+
 ---
 
-## Beispiel: Entschlüsselung
+## Verwendung
 
 ```bash
-sudo ./forensic_unlock /pfad/zum/image.E01 "BITLOCKER-KEY" /mnt/output/case01
+sudo ./forensic_unlock <image|device> <recovery-key> [ausgabeordner]
 ```
 
-Ablauf:
+| Argument         | Bedeutung                                                              |
+| ---------------- | ---------------------------------------------------------------------- |
+| `image`          | RAW-Image, erstes EWF-Segment (`.E01`) oder Blockgerät                 |
+| `recovery-key`   | BitLocker-Wiederherstellungsschlüssel, 48 Ziffern in 8 Blöcken         |
+| `ausgabeordner`  | optional, ohne Angabe wird `./run_JJJJMMTT_HHMMSS` angelegt            |
 
-1. EWF-Image wird automatisch zu RAW konvertiert  
-2. Partitionstabelle wird analysiert (mmls + BDP-Erkennung)  
-3. BDP wird entschlüsselt  
-4. Image-Segmente werden per `cat` zusammengeführt  
-5. Temporäre Dateien werden gelöscht  
+### Beispiel mit EWF-Image
 
-Ergebnis:
+```bash
+sudo ./forensic_unlock /cases/case01/disk.E01 \
+    "123456-123456-123456-123456-123456-123456-123456-123456" \
+    /mnt/output/case01
+```
+
+Bei EWF-Images immer das **erste** Segment angeben. Alle weiteren Segmente (`disk.E02`, `disk.E03`, ...) müssen im selben Ordner liegen und werden automatisch gefunden. Fehlt ein Segment in der Mitte, bricht das Tool mit einer Meldung ab, bevor irgendetwas eingehängt wird.
+
+### Ergebnis
+
 ```bash
 /mnt/output/case01/
-└── merged.dd   # Vollständiges entschlüsseltes Image
+├── merged.dd   # vollständiges entschlüsseltes Image
+└── bdp.info    # Lage der entschlüsselten Partition (Slot, Start, Ende, Sektorgröße, Offset)
 ```
+
+Die entschlüsselte Partition lässt sich danach zum Beispiel so ansehen:
+
+```bash
+mmls merged.dd
+fls -o <startsektor> merged.dd
+```
+
+### Exit-Codes
+
+| Code  | Bedeutung                              |
+| ----- | -------------------------------------- |
+| `0`   | Erfolg                                 |
+| `1`   | Fehler (Meldung auf stderr)            |
+| `130` | Abbruch mit Ctrl+C                     |
 
 ---
 
-## Optional: Zeitgestempelter Run-Modus
+## Docker
 
-Wird kein Output-Ordner angegeben, erstellt das Tool automatisch:
+Unter macOS, Windows oder ohne lokale Installation läuft das Tool in einem Kali-Container:
 
 ```bash
-/mnt/output/run_YYYYMMDD_HHMM/
-└── merged.dd
+./scripts/run-docker.sh /cases/case01/disk.E01 "<recovery-key>" ./case01
 ```
+
+Das Skript baut das Image, bindet den Ordner mit den Segmenten read-only ein und startet den Container mit `--privileged` (nötig für FUSE).
+
+---
+
+## Tests
+
+Alle Tests laufen in Docker, also auch unter macOS:
+
+```bash
+./scripts/run-tests.sh
+```
+
+Das Skript führt drei Stufen aus:
+
+1. **Unit-Tests** (`tests/unit_tests.c`, lokal unter Linux mit `sudo make test`) für jedes Modul, unter anderem Segmentnamen, mmls-Parser, Signaturerkennung, Merge mit Grenzfällen, Mounts und Aufräumen.
+2. **Integrationstests** (`tests/integration_tests.sh`) mit echten BitLocker-Volumes. Dazu gehören GPT, MBR, 4K-Sektoren, BitLocker To Go, AES-CBC mit Elephant-Diffuser, mehrere BitLocker-Partitionen, EWF mit über 100 Segmenten, komprimiertes EWF und Blockgeräte. Geprüft werden außerdem fehlende Segmente, falsche Schlüssel, Sonderzeichen in Pfaden und Ctrl+C während der Abfrage und während des Kopierens. Jedes Ergebnis wird per SHA-256 mit einer unabhängig erzeugten Referenz verglichen.
+3. **Host-Test** von `scripts/run-docker.sh`.
+
+Die BitLocker-Testimages stammen aus der Testsuite von [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup). Sie werden beim ersten Lauf heruntergeladen, per Prüfsumme verifiziert und nicht mit eingecheckt.
 
 ---
 
 ## Hinweise
 
-- Root-Rechte erforderlich (`sudo`)
-- Getestet unter Linux und **WSL2** (Ubuntu 22.04)
-- Unterstützt `.E01` / `.ewf`, RAW-Images (`.dd`) und Blockgeräte (`/dev/sdX`)
-- Kein `dmsetup` oder Device-Mapper nötig
-- Alle temporären Dateien werden automatisch gelöscht
-- Ergebnis ist ein einzelnes entschlüsseltes `.dd`-Image (`merged.dd`)
+- Root-Rechte sind nötig (`sudo`), weil `dislocker` und `ewfmount` über FUSE einhängen.
+- Getestet unter Kali Linux (rolling) mit dislocker 0.7.3 und The Sleuth Kit 4.14, unter Ubuntu 22.04 mit dislocker 0.7.2 und The Sleuth Kit 4.11, außerdem über Docker Desktop unter macOS.
+- Das Binary im GitHub-Release ist unter Ubuntu 22.04 gebaut und läuft auf allen Systemen ab glibc 2.34. Die Pakete aus den Voraussetzungen werden trotzdem benötigt.
+- Unterstützt wird aktuell der Wiederherstellungsschlüssel (Recovery Password). Benutzerpasswort, BEK-Datei oder FVEK werden noch nicht angeboten.
+- Freier Speicher im Ausgabeordner: etwa die Größe des Images. Bereiche, die nur Nullen enthalten, werden nicht physisch geschrieben.
+- Ein vorhandenes `merged.dd` wird nie überschrieben.
 
 ---
 
@@ -102,7 +161,12 @@ Wird kein Output-Ordner angegeben, erstellt das Tool automatisch:
 
 Dieses Projekt steht unter der [MIT License](LICENSE) © 2025 [yalmn](https://github.com/yalmn/)
 
+---
 
-## Release-Hinweis
+## Release-Hinweise
 
-Diese Version (`v1.0.0`) ist die erste stabile Veröffentlichung mit vollständiger Automatisierung des BitLocker-Entschlüsselungsprozesses ohne Abhängigkeit von `dmsetup`. Weitere Features wie automatische Dateiextraktion und forensische Report-Erstellung sind geplant.
+**v2.0.0:** Stabilisierung. EWF-Verarbeitung über `ewfmount` mit Unterstützung mehrerer Segmente, Partitionserkennung über die BitLocker-Signatur (auch MBR, 4K-Sektoren und To Go), Merge ohne Zwischendateien, zuverlässiges Aushängen und Aufräumen, Ctrl+C-Behandlung, kein `system()` mehr, automatisierte Tests.
+
+**v1.0.0:** Erste Veröffentlichung.
+
+Geplant sind automatische Dateiextraktion und ein forensischer Report mit Hashwerten.
