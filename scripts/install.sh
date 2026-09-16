@@ -1,16 +1,16 @@
 #!/bin/bash
+# Installiert die Abhängigkeiten (Debian, Ubuntu, Kali, WSL2) und baut forensic_unlock.
+set -eu
 
-echo "[*] Installiere benötigte Pakete (dislocker, xmount, sleuthkit, parted)..."
-sudo apt update
-sudo apt install -y dislocker xmount sleuthkit parted build-essential
+cd "$(dirname "$0")/.."
+
+echo "[*] Installiere benötigte Pakete (dislocker, ewf-tools, sleuthkit, fuse3)..."
+sudo apt-get update
+sudo apt-get install -y build-essential dislocker ewf-tools sleuthkit fuse3
 
 echo "[*] Starte Build-Vorgang..."
-make clean && make
+make clean
+make
 
-if [[ -f forensic_unlock ]]; then
-    echo "[+] Build erfolgreich abgeschlossen."
-    echo "[+] Starte mit: sudo ./forensic_unlock <image> <key> <ausgabeverzeichnis>"
-else
-    echo "[!] Fehler beim Kompilieren von forensic_unlock."
-    exit 1
-fi
+echo "[+] Build erfolgreich abgeschlossen."
+echo "[+] Starte mit: sudo ./forensic_unlock <image> <recovery-key> [ausgabeordner]"

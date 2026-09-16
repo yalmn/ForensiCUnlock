@@ -1,97 +1,192 @@
-#define _GNU_SOURCE
+// src/image_merger.c
 #include "image_merger.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <linux/fs.h>
 #include <stdio.h>
-#include <stdlib.h>     // popen, pclose, system
-#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
-int merge_and_cleanup(const char *raw_image, const char *dislocker_file, const PartitionInfo *bdp_info, const char *output_dir)
+#define COPY_BUFFER_SIZE (1024 * 1024)
+
+static int get_fd_size(int fd, uint64_t *size)
 {
-    char part1_path[512], part2_path[512], part3_path[512], merged_path[512];
-    snprintf(part1_path, sizeof(part1_path), "%s/part1.img", output_dir);
-    snprintf(part2_path, sizeof(part2_path), "%s/part2.img", output_dir);
-    snprintf(part3_path, sizeof(part3_path), "%s/part3.img", output_dir);
-    snprintf(merged_path, sizeof(merged_path), "%s/merged.dd", output_dir);
+    struct stat st;
+    if (fstat(fd, &st) != 0)
+        return 0;
 
-    // 1. Extrahiere part1.img
-    char cmd1[1024];
-    snprintf(cmd1, sizeof(cmd1),
-             "dd if='%s' of='%s' bs=512 count=%llu status=none",
-             raw_image, part1_path,
-             (unsigned long long)bdp_info->start);
-
-    // 2. Kopiere dislocker-file zu part2.img
-    char cmd2[1024];
-    snprintf(cmd2, sizeof(cmd2),
-             "cp '%s' '%s'",
-             dislocker_file, part2_path);
-
-    // 3. Ermittle Gesamtlänge des Images in Sektoren
-    char cmd_size[1024];
-    snprintf(cmd_size, sizeof(cmd_size), "blockdev --getsz '%s'", raw_image);
-    FILE *fp = popen(cmd_size, "r");
-    if (!fp)
+    if (S_ISREG(st.st_mode))
     {
-        perror("[!] Fehler beim Auslesen der Imagegröße");
-        return 0;
+        *size = (uint64_t)st.st_size;
+        return 1;
     }
+    if (S_ISBLK(st.st_mode))
+        return ioctl(fd, BLKGETSIZE64, size) == 0;
+    return 0;
+}
 
-    unsigned long long total_sectors = 0;
-    if (fscanf(fp, "%llu", &total_sectors) != 1)
+int get_image_size(const char *path, uint64_t *size)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    int ok = get_fd_size(fd, size);
+    close(fd);
+    return ok;
+}
+
+static int is_zero(const unsigned char *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++)
     {
-        perror("[!] Fehler beim Parsen der Imagegröße");
-        pclose(fp);
-        return 0;
+        if (buf[i] != 0)
+            return 0;
     }
-    pclose(fp);
-
-    // 4. Extrahiere part3.img
-    uint64_t after_bdp = bdp_info->start + bdp_info->length;
-    uint64_t tail_len = total_sectors > after_bdp ? total_sectors - after_bdp : 0;
-
-    char cmd3[1024];
-    snprintf(cmd3, sizeof(cmd3),
-             "dd if='%s' of='%s' bs=512 skip=%llu count=%llu status=none",
-             raw_image, part3_path,
-             (unsigned long long)after_bdp,
-             (unsigned long long)tail_len);
-
-    // 5. Führe dd- und cp-Befehle aus
-    printf("[*] Erzeuge Partitionsteil 1...\n");
-    if (system(cmd1) != 0) return 0;
-
-    printf("[*] Kopiere entschlüsselte Partition...\n");
-    if (system(cmd2) != 0) return 0;
-
-    printf("[*] Erzeuge Partitionsteil 3...\n");
-    if (tail_len > 0 && system(cmd3) != 0) return 0;
-
-    // 6. Merge zu merged.dd
-    char cmd_merge[2048];
-    size_t merge_len = snprintf(cmd_merge, sizeof(cmd_merge),
-         "cat '%s' '%s' '%s' > '%s'",
-         part1_path, part2_path, part3_path, merged_path);
-    if (merge_len >= sizeof(cmd_merge)) {
-        fprintf(stderr, "[!] Merge-Befehl zu lang, wird abgeschnitten.\n");
-        return 0;
-    }
-
-    printf("[*] Merging nach: %s\n", merged_path);
-    if (system(cmd_merge) != 0) return 0;
-
-    // 7. Cleanup: Nur merged.dd und ursprüngliches Image bleiben erhalten
-    char cmd_cleanup[2048];
-    size_t clean_len = snprintf(cmd_cleanup, sizeof(cmd_cleanup),
-         "rm -f '%s' '%s' '%s' '%s' && rm -rf '%s/xmount' '%s/bitlocker'",
-         part1_path, part2_path, part3_path, dislocker_file, output_dir, output_dir);
-    if (clean_len >= sizeof(cmd_cleanup)) {
-        fprintf(stderr, "[!] Cleanup-Befehl zu lang, wird abgeschnitten.\n");
-        return 0;
-    }
-
-    printf("[*] Bereinige temporäre Dateien...\n");
-    system(cmd_cleanup);
-
     return 1;
+}
+
+static int write_all(int fd, const unsigned char *buf, size_t len)
+{
+    while (len > 0)
+    {
+        ssize_t n = write(fd, buf, len);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            return 0;
+        }
+        buf += n;
+        len -= (size_t)n;
+    }
+    return 1;
+}
+
+int copy_range(int in_fd, uint64_t offset, uint64_t len, int out_fd, const volatile sig_atomic_t *stop)
+{
+    unsigned char *buf = malloc(COPY_BUFFER_SIZE);
+    if (!buf)
+        return 0;
+
+    int ok = 1;
+    while (len > 0)
+    {
+        if (stop && *stop)
+        {
+            ok = 0;
+            break;
+        }
+
+        size_t chunk = len < COPY_BUFFER_SIZE ? (size_t)len : COPY_BUFFER_SIZE;
+        ssize_t n = pread(in_fd, buf, chunk, (off_t)offset);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+        {
+            fprintf(stderr, "\n[!] Lesefehler bei Byte %" PRIu64 ": %s\n", offset,
+                    n == 0 ? "Datei zu kurz" : strerror(errno));
+            ok = 0;
+            break;
+        }
+
+        if (is_zero(buf, (size_t)n))
+        {
+            if (lseek(out_fd, n, SEEK_CUR) < 0)
+            {
+                ok = 0;
+                break;
+            }
+        }
+        else if (!write_all(out_fd, buf, (size_t)n))
+        {
+            fprintf(stderr, "\n[!] Schreibfehler: %s\n", strerror(errno));
+            ok = 0;
+            break;
+        }
+
+        offset += (uint64_t)n;
+        len -= (uint64_t)n;
+    }
+
+    free(buf);
+    return ok;
+}
+
+int merge_image(const char *raw_image, const char *decrypted_file, const PartitionInfo *info,
+                const char *merged_path, const volatile sig_atomic_t *stop)
+{
+    int raw_fd = -1, dec_fd = -1, out_fd = -1, ok = 0;
+    uint64_t raw_size, dec_size;
+    uint64_t part_offset = info->start * info->sector_size;
+    uint64_t part_bytes = info->length * info->sector_size;
+
+    raw_fd = open(raw_image, O_RDONLY);
+    dec_fd = open(decrypted_file, O_RDONLY);
+    if (raw_fd < 0 || dec_fd < 0)
+    {
+        perror("[!] Image konnte nicht geöffnet werden");
+        goto out;
+    }
+    if (!get_fd_size(raw_fd, &raw_size) || !get_fd_size(dec_fd, &dec_size))
+    {
+        fprintf(stderr, "[!] Imagegröße konnte nicht ermittelt werden.\n");
+        goto out;
+    }
+    if (part_offset + part_bytes > raw_size)
+    {
+        fprintf(stderr, "[!] Partition reicht über das Ende des Images hinaus.\n");
+        goto out;
+    }
+    if (dec_size != part_bytes)
+    {
+        fprintf(stderr, "[!] Entschlüsselte Partition hat %" PRIu64 " Byte, erwartet wurden %" PRIu64 " Byte.\n",
+                dec_size, part_bytes);
+        goto out;
+    }
+
+    out_fd = open(merged_path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (out_fd < 0)
+    {
+        if (errno == EEXIST)
+            fprintf(stderr, "[!] %s existiert bereits und wird nicht überschrieben.\n", merged_path);
+        else
+            perror("[!] Zieldatei konnte nicht angelegt werden");
+        goto out;
+    }
+
+    uint64_t tail_offset = part_offset + part_bytes;
+    printf("[*] Kopiere Bereich vor der Partition (%" PRIu64 " Byte)...\n", part_offset);
+    if (!copy_range(raw_fd, 0, part_offset, out_fd, stop))
+        goto out;
+    printf("[*] Kopiere entschlüsselte Partition (%" PRIu64 " Byte)...\n", part_bytes);
+    if (!copy_range(dec_fd, 0, part_bytes, out_fd, stop))
+        goto out;
+    printf("[*] Kopiere Bereich nach der Partition (%" PRIu64 " Byte)...\n", raw_size - tail_offset);
+    if (!copy_range(raw_fd, tail_offset, raw_size - tail_offset, out_fd, stop))
+        goto out;
+
+    // Übersprungene Nullblöcke am Ende brauchen die richtige Dateigröße
+    if (ftruncate(out_fd, (off_t)raw_size) != 0 || fsync(out_fd) != 0)
+    {
+        perror("[!] Zieldatei konnte nicht abgeschlossen werden");
+        goto out;
+    }
+    ok = 1;
+
+out:
+    if (raw_fd >= 0)
+        close(raw_fd);
+    if (dec_fd >= 0)
+        close(dec_fd);
+    if (out_fd >= 0)
+    {
+        close(out_fd);
+        if (!ok)
+            unlink(merged_path);
+    }
+    return ok;
 }

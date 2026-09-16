@@ -1,30 +1,35 @@
-# Offizielles Kali Linux Base-Image
-FROM kalilinux/kali-rolling
+# Basis: Kali Linux mit allen Laufzeit-Abhängigkeiten
+FROM kalilinux/kali-rolling AS base
 
-# Projektmetadaten
 LABEL org.opencontainers.image.title="ForensiCUnlock"
-LABEL org.opencontainers.image.description="Tool zur automatisierten Entschlüsselung und Rekonstruktion von BitLocker-basierten BDP-Partitionen aus EWF- oder RAW-Images."
-LABEL org.opencontainers.image.version="1.0"
-LABEL org.opencontainers.image.authors="Dein Name <deine.mail@example.org>"
+LABEL org.opencontainers.image.description="Entschlüsselt BitLocker-Partitionen in EWF- oder RAW-Images und setzt das vollständige Image wieder zusammen."
+LABEL org.opencontainers.image.version="2.0.0"
+LABEL org.opencontainers.image.authors="H. Yalman (https://github.com/yalmn)"
+LABEL org.opencontainers.image.licenses="MIT"
 
-# Arbeitsverzeichnis innerhalb des Containers
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        dislocker \
+        ewf-tools \
+        fuse3 \
+        sleuthkit \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /opt/forensicunlock
 
-# Notwendige Tools installieren (für Kali typisch bereits verfügbar, hier zur Sicherheit explizit)
-RUN apt update && apt install -y \
-    build-essential \
-    xmount \
-    dislocker \
-    ddrescue \
-    sleuthkit \
-    sudo \
-    && apt clean
+# Test-Umgebung: docker build --target test ...
+FROM base AS test
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        fdisk \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Projektcode ins Container-Dateisystem kopieren
+# Laufzeit-Image (Standard)
+FROM base AS runtime
 COPY . /opt/forensicunlock
-
-# Projekt kompilieren
-RUN make
-
-# Einstiegspunkt: interaktive Bash-Shell
-CMD ["bash"]
+RUN make clean && make
+ENTRYPOINT ["/opt/forensicunlock/forensic_unlock"]
