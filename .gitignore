@@ -1,0 +1,5 @@
+*.o
+/forensic_unlock
+/tests/unit_tests
+/tests/fixtures/
+
