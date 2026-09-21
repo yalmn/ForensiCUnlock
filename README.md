@@ -73,13 +73,25 @@ Alternativ erledigt `./scripts/install.sh` beides.
 
 ```bash
 sudo ./forensic_unlock <image|device> <recovery-key> [ausgabeordner]
+sudo ./forensic_unlock <image|device> --vmk <vmk-datei> [ausgabeordner]
 ```
 
 | Argument         | Bedeutung                                                              |
 | ---------------- | ---------------------------------------------------------------------- |
 | `image`          | RAW-Image, erstes EWF-Segment (`.E01`) oder Blockgerät                 |
 | `recovery-key`   | BitLocker-Wiederherstellungsschlüssel, 48 Ziffern in 8 Blöcken         |
+| `--vmk <datei>`  | Datei mit dem Volume Master Key (32 rohe Bytes), z. B. aus einem TPM-Sniff |
 | `ausgabeordner`  | optional, ohne Angabe wird `./run_JJJJMMTT_HHMMSS` angelegt            |
+
+Statt des Wiederherstellungsschlüssels lässt sich das Volume auch direkt mit dem
+**Volume Master Key** aufschließen (`--vmk`). Das ist der Schlüssel, den ein
+TPM-Sniffing-Angriff liefert; dislocker wird dann mit `-K` statt `-p` aufgerufen.
+
+### Beispiel mit VMK-Datei
+
+```bash
+sudo ./forensic_unlock /cases/case01/disk.E01 --vmk bitlocker.vmk /mnt/output/case01
+```
 
 ### Beispiel mit EWF-Image
 

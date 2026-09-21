@@ -515,11 +515,41 @@ static void test_run_dislocker_errors(void)
     write_file(img, zeros, sizeof(zeros));
     tmp_path(dir, sizeof(dir), "dislocker-mnt");
 
-    CHECK(run_dislocker(img, 0, "000000-000000-000000-000000-000000-000000-000000-000000", dir) == 0);
+    CHECK(run_dislocker(img, 0, KEY_RECOVERY, "000000-000000-000000-000000-000000-000000-000000-000000", dir) == 0);
     CHECK(is_mountpoint(dir) == 0);
 
     tmp_path(dir, sizeof(dir), "kein-bitlocker.img/unterordner"); // Verzeichnis nicht anlegbar
-    CHECK(run_dislocker(img, 0, "x", dir) == 0);
+    CHECK(run_dislocker(img, 0, KEY_RECOVERY, "x", dir) == 0);
+}
+
+/* build_key_args: baut die dislocker-Schlüsselargumente je nach Modus */
+
+static void test_build_key_args(void)
+{
+    const char *out[2] = {NULL, NULL};
+    char *heap = NULL;
+
+    // Recovery: ein Argument "-p<key>", per malloc, muss freigegeben werden.
+    int n = build_key_args(KEY_RECOVERY, "123456-654321", out, &heap);
+    CHECK(n == 1);
+    CHECK(heap != NULL);
+    CHECK(out[0] == heap);
+    CHECK(strcmp(out[0], "-p123456-654321") == 0);
+    free(heap);
+
+    // VMK: zwei Argumente "-K" und der Dateipfad, kein Heap.
+    heap = NULL;
+    out[0] = out[1] = NULL;
+    n = build_key_args(KEY_VMK, "/pfad/blk.vmk", out, &heap);
+    CHECK(n == 2);
+    CHECK(heap == NULL);
+    CHECK(strcmp(out[0], "-K") == 0);
+    CHECK(strcmp(out[1], "/pfad/blk.vmk") == 0);
+
+    // Ohne Schlüssel: Fehler.
+    heap = NULL;
+    CHECK(build_key_args(KEY_RECOVERY, NULL, out, &heap) == 0);
+    CHECK(heap == NULL);
 }
 
 int main(void)
@@ -552,6 +582,7 @@ int main(void)
     test_copy_range();
     test_merge_image();
     test_run_dislocker_errors();
+    test_build_key_args();
 
     char *rm[] = {"rm", "-rf", tmp_root, NULL};
     run_cmd(rm);
