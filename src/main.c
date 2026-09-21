@@ -39,8 +39,10 @@ static void install_signal_handlers(void)
 static void usage(const char *prog)
 {
     fprintf(stderr, "Verwendung: %s <image|device> <recovery-key> [ausgabeordner]\n", prog);
+    fprintf(stderr, "        oder %s <image|device> --vmk <vmk-datei> [ausgabeordner]\n", prog);
     fprintf(stderr, "  image          RAW-Image (.dd/.raw/.img), EWF-Image (.E01 bzw. .Ex01) oder Blockgerät\n");
     fprintf(stderr, "  recovery-key   BitLocker-Wiederherstellungsschlüssel (48 Ziffern)\n");
+    fprintf(stderr, "  --vmk <datei>  Datei mit dem Volume Master Key (z. B. aus einem TPM-Sniff)\n");
     fprintf(stderr, "  ausgabeordner  optional, sonst ./run_JJJJMMTT_HHMMSS\n");
 }
 
@@ -101,7 +103,7 @@ int main(int argc, char *argv[])
     // Zeilenweise ausgeben, damit Logs (z. B. mit tee) sofort aktuell sind
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    if (argc != 3 && argc != 4)
+    if (argc < 3 || argc > 5)
     {
         usage(argv[0]);
         return 1;
@@ -113,12 +115,41 @@ int main(int argc, char *argv[])
     }
 
     const char *input_image = argv[1];
-    const char *recovery_key = argv[2];
-    char output_folder[PATH_MAX];
+    KeyMode key_mode;
+    const char *key;
+    int out_idx; // Index des optionalen Ausgabeordners
 
-    if (argc == 4)
+    if (strcmp(argv[2], "--vmk") == 0)
     {
-        snprintf(output_folder, sizeof(output_folder), "%s", argv[3]);
+        // Zweite Form: <image> --vmk <datei> [ausgabeordner]
+        if (argc < 4)
+        {
+            usage(argv[0]);
+            return 1;
+        }
+        key_mode = KEY_VMK;
+        key = argv[3];
+        out_idx = 4;
+    }
+    else
+    {
+        // Erste Form: <image> <recovery-key> [ausgabeordner]
+        key_mode = KEY_RECOVERY;
+        key = argv[2];
+        out_idx = 3;
+    }
+
+    // Nach dem Schlüssel darf höchstens noch der Ausgabeordner folgen.
+    if (argc > out_idx + 1)
+    {
+        usage(argv[0]);
+        return 1;
+    }
+
+    char output_folder[PATH_MAX];
+    if (argc == out_idx + 1)
+    {
+        snprintf(output_folder, sizeof(output_folder), "%s", argv[out_idx]);
     }
     else
     {
@@ -139,6 +170,11 @@ int main(int argc, char *argv[])
     if (!path_exists(input_image))
     {
         fprintf(stderr, "[!] Eingabe nicht gefunden: %s\n", input_image);
+        return 1;
+    }
+    if (key_mode == KEY_VMK && !path_exists(key))
+    {
+        fprintf(stderr, "[!] VMK-Datei nicht gefunden: %s\n", key);
         return 1;
     }
     if (path_exists(merged_path))
@@ -221,7 +257,7 @@ int main(int argc, char *argv[])
 
     // Entschlüsselung
     printf("[*] Starte Entschlüsselung mit dislocker...\n");
-    if (!run_dislocker(raw_image_path, bdp_info.start * bdp_info.sector_size, recovery_key, bitlocker_dir))
+    if (!run_dislocker(raw_image_path, bdp_info.start * bdp_info.sector_size, key_mode, key, bitlocker_dir))
         goto cleanup;
     if (interrupted)
         goto cleanup;
