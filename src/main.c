@@ -161,6 +161,11 @@ int main(int argc, char *argv[])
         snprintf(output_folder, sizeof(output_folder), "run_%s", stamp);
     }
 
+    // Abschließende Schrägstriche entfernen, damit keine Pfade wie "ordner//ova" entstehen
+    size_t out_len = strlen(output_folder);
+    while (out_len > 1 && output_folder[out_len - 1] == '/')
+        output_folder[--out_len] = '\0';
+
     char ewf_dir[PATH_MAX + 16], bitlocker_dir[PATH_MAX + 16], merged_path[PATH_MAX + 16];
     char info_path[PATH_MAX + 16], dislocker_file[PATH_MAX + 32], raw_image_path[PATH_MAX + 16];
     char ova_dir[PATH_MAX + 16];
