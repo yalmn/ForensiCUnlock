@@ -7,6 +7,7 @@ LDFLAGS =
 LIB_SRC = \
     src/exec_utils.c \
     src/image_converter.c \
+    src/ova_mounter.c \
     src/partition_parser.c \
     src/dislocker_runner.c \
     src/image_merger.c
