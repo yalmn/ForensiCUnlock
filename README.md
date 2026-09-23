@@ -12,8 +12,9 @@
 
 ## Features
 
-- Eingabe als RAW-Image (`.dd`, `.raw`, `.img`), EWF-Image (`.E01`, `.Ex01`, `.ewf`) oder Blockgerät (`/dev/sdX`)
+- Eingabe als RAW-Image (`.dd`, `.raw`, `.img`), EWF-Image (`.E01`, `.Ex01`, `.ewf`), VM-Export (`.ova`) oder Blockgerät (`/dev/sdX`)
 - EWF-Images mit beliebig vielen Segmenten (`.E01`, `.E02`, ... `.E99`, `.EAA`, ...), Vollständigkeit wird vorab geprüft
+- OVA-Dateien: die enthaltenen VMDK-Disks werden extrahiert und read-only per `qemu-nbd` eingehängt (keine RAW-Vollkopie), mehrere Disks werden alle nach BitLocker durchsucht
 - Erkennung der BitLocker-Partition über die Signatur im Volume-Header, unabhängig von Partitionsnamen oder -typ
 - GPT und MBR, 512- und 4096-Byte-Sektoren, BitLocker To Go
 - Auswahl, wenn mehrere BitLocker-Partitionen im Image liegen
@@ -26,12 +27,12 @@
 
 ## Ablauf
 
-1. **EWF bereitstellen:** Bei `.E01` prüft das Tool die Segmente und hängt das Image mit `ewfmount` als RAW-Datei ein.
-2. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft.
+1. **Bereitstellen:** Bei `.E01` prüft das Tool die Segmente und hängt das Image mit `ewfmount` als RAW-Datei ein. Bei `.ova` werden die VMDK-Disks aus dem Archiv extrahiert und read-only per `qemu-nbd` als Blockgerät (`/dev/nbdX`) eingehängt.
+2. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft. Bei mehreren OVA-Disks werden alle durchsucht und die Treffer zur Auswahl angeboten.
 3. **Kontrolle:** Die gefundene Partition und die komplette Partitionstabelle werden angezeigt. Weiter geht es erst nach ENTER.
 4. **Entschlüsseln:** `dislocker` stellt die entschlüsselte Partition read-only als `dislocker-file` bereit.
 5. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach.
-6. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, die Hilfsordner gelöscht.
+6. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, `qemu-nbd`-Geräte gelöst, extrahierte VMDKs und Hilfsordner gelöscht.
 
 ---
 
@@ -42,6 +43,7 @@
 | `main.c`           | Einstiegspunkt, Argumente, Ablaufsteuerung, Aufräumen und Ctrl+C        |
 | `exec_utils`       | Externe Programme ohne Shell starten, Verzeichnisse anlegen, Mounts prüfen und aushängen |
 | `image_converter`  | EWF-Segmente prüfen und das Image mit `ewfmount` einhängen              |
+| `ova_mounter`      | VMDK-Disks aus einer OVA extrahieren und read-only per `qemu-nbd` einhängen |
 | `partition_parser` | `mmls`-Ausgabe auswerten, Sektorgröße lesen, BitLocker-Signatur prüfen  |
 | `dislocker_runner` | `dislocker` mit dem passenden Byte-Offset aufrufen                      |
 | `image_merger`     | Imagegröße ermitteln und `merged.dd` blockweise schreiben               |
@@ -54,8 +56,13 @@
 
 ```bash
 sudo apt update
-sudo apt install build-essential dislocker ewf-tools sleuthkit fuse3 -y
+sudo apt install build-essential dislocker ewf-tools sleuthkit fuse3 qemu-utils -y
 ```
+
+`qemu-utils` (liefert `qemu-nbd`) wird nur für OVA-Dateien gebraucht. Dafür muss außerdem
+das `nbd`-Kernelmodul verfügbar sein; das Tool lädt es bei Bedarf mit `modprobe nbd`.
+In einer VM oder auf Blech funktioniert das direkt, in einem Docker-Container nur mit
+`--privileged` und Zugriff auf `/dev/nbd*`.
 
 ### Projekt klonen & kompilieren
 
@@ -78,7 +85,7 @@ sudo ./forensic_unlock <image|device> --vmk <vmk-datei> [ausgabeordner]
 
 | Argument         | Bedeutung                                                              |
 | ---------------- | ---------------------------------------------------------------------- |
-| `image`          | RAW-Image, erstes EWF-Segment (`.E01`) oder Blockgerät                 |
+| `image`          | RAW-Image, erstes EWF-Segment (`.E01`), OVA-Datei (`.ova`) oder Blockgerät |
 | `recovery-key`   | BitLocker-Wiederherstellungsschlüssel, 48 Ziffern in 8 Blöcken         |
 | `--vmk <datei>`  | Datei mit dem Volume Master Key (32 rohe Bytes), z. B. aus einem TPM-Sniff |
 | `ausgabeordner`  | optional, ohne Angabe wird `./run_JJJJMMTT_HHMMSS` angelegt            |
@@ -102,6 +109,20 @@ sudo ./forensic_unlock /cases/case01/disk.E01 \
 ```
 
 Bei EWF-Images immer das **erste** Segment angeben. Alle weiteren Segmente (`disk.E02`, `disk.E03`, ...) müssen im selben Ordner liegen und werden automatisch gefunden. Fehlt ein Segment in der Mitte, bricht das Tool mit einer Meldung ab, bevor irgendetwas eingehängt wird.
+
+### Beispiel mit OVA-Datei
+
+```bash
+sudo ./forensic_unlock /cases/case01/win11.ova \
+    "123456-123456-123456-123456-123456-123456-123456-123456" \
+    /mnt/output/case01
+```
+
+Die VMDK-Disks werden aus der OVA in den Ausgabeordner extrahiert und read-only per `qemu-nbd`
+eingehängt. Enthält die OVA mehrere Disks, werden alle nach BitLocker durchsucht; gibt es mehr als
+einen Treffer, fragt das Tool, welche Partition entschlüsselt werden soll. Nach dem Lauf werden die
+nbd-Geräte gelöst und die extrahierten VMDKs wieder entfernt. `--vmk` funktioniert hier genauso wie
+bei den anderen Eingaben.
 
 ### Ergebnis
 
@@ -160,7 +181,7 @@ Die BitLocker-Testimages stammen aus der Testsuite von [cryptsetup](https://gitl
 
 ## Hinweise
 
-- Root-Rechte sind nötig (`sudo`), weil `dislocker` und `ewfmount` über FUSE einhängen.
+- Root-Rechte sind nötig (`sudo`), weil `dislocker` und `ewfmount` über FUSE einhängen und `qemu-nbd` bei OVA-Dateien ein Blockgerät belegt (ggf. `modprobe nbd`).
 - Getestet unter Kali Linux (rolling) mit dislocker 0.7.3 und The Sleuth Kit 4.14, unter Ubuntu 22.04 mit dislocker 0.7.2 und The Sleuth Kit 4.11, außerdem über Docker Desktop unter macOS.
 - Das Binary im GitHub-Release ist unter Ubuntu 22.04 gebaut und läuft auf allen Systemen ab glibc 2.34. Die Pakete aus den Voraussetzungen werden trotzdem benötigt.
 - Unterstützt wird aktuell der Wiederherstellungsschlüssel (Recovery Password). Benutzerpasswort, BEK-Datei oder FVEK werden noch nicht angeboten.

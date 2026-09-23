@@ -13,6 +13,7 @@ RUN apt-get update \
         dislocker \
         ewf-tools \
         fuse3 \
+        qemu-utils \
         sleuthkit \
     && rm -rf /var/lib/apt/lists/*
 

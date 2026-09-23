@@ -14,6 +14,7 @@
 #include "exec_utils.h"
 #include "image_converter.h"
 #include "image_merger.h"
+#include "ova_mounter.h"
 #include "partition_parser.h"
 
 static int failures = 0;
@@ -168,6 +169,20 @@ static void test_is_ewf_path(void)
     CHECK(is_ewf_path("/dev/sdb") == 0);
     CHECK(is_ewf_path("/cases.E01/disk") == 0);
     CHECK(is_ewf_path(".E01") == 0);
+}
+
+static void test_is_ova_path(void)
+{
+    CHECK(is_ova_path("/cases/vm.ova") == 1);
+    CHECK(is_ova_path("vm.OVA") == 1);
+    CHECK(is_ova_path("vm.Ova") == 1);
+    CHECK(is_ova_path("disk.ovf") == 0); // nur .ova, nicht der reine Deskriptor
+    CHECK(is_ova_path("disk.vmdk") == 0);
+    CHECK(is_ova_path("disk.dd") == 0);
+    CHECK(is_ova_path("/dev/sdb") == 0);
+    CHECK(is_ova_path("/cases.ova/disk") == 0);
+    CHECK(is_ova_path(".ova") == 0);
+    CHECK(is_ova_path("ova") == 0);
 }
 
 static void check_ext(const char *first, int n, const char *expected)
@@ -573,6 +588,7 @@ int main(void)
     test_make_dir();
     test_mountpoint();
     test_is_ewf_path();
+    test_is_ova_path();
     test_ewf_segment_ext();
     test_check_ewf_segments();
     test_parse_mmls();

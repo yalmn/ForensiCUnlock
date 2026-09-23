@@ -14,6 +14,7 @@
 #include "exec_utils.h"
 #include "image_converter.h"
 #include "image_merger.h"
+#include "ova_mounter.h"
 #include "partition_parser.h"
 
 static volatile sig_atomic_t interrupted = 0;
@@ -40,7 +41,8 @@ static void usage(const char *prog)
 {
     fprintf(stderr, "Verwendung: %s <image|device> <recovery-key> [ausgabeordner]\n", prog);
     fprintf(stderr, "        oder %s <image|device> --vmk <vmk-datei> [ausgabeordner]\n", prog);
-    fprintf(stderr, "  image          RAW-Image (.dd/.raw/.img), EWF-Image (.E01 bzw. .Ex01) oder Blockgerät\n");
+    fprintf(stderr, "  image          RAW-Image (.dd/.raw/.img), EWF-Image (.E01 bzw. .Ex01),\n");
+    fprintf(stderr, "                 VM-Export (.ova) oder Blockgerät\n");
     fprintf(stderr, "  recovery-key   BitLocker-Wiederherstellungsschlüssel (48 Ziffern)\n");
     fprintf(stderr, "  --vmk <datei>  Datei mit dem Volume Master Key (z. B. aus einem TPM-Sniff)\n");
     fprintf(stderr, "  ausgabeordner  optional, sonst ./run_JJJJMMTT_HHMMSS\n");
@@ -161,11 +163,17 @@ int main(int argc, char *argv[])
 
     char ewf_dir[PATH_MAX + 16], bitlocker_dir[PATH_MAX + 16], merged_path[PATH_MAX + 16];
     char info_path[PATH_MAX + 16], dislocker_file[PATH_MAX + 32], raw_image_path[PATH_MAX + 16];
+    char ova_dir[PATH_MAX + 16];
     snprintf(ewf_dir, sizeof(ewf_dir), "%s/ewf", output_folder);
     snprintf(bitlocker_dir, sizeof(bitlocker_dir), "%s/bitlocker", output_folder);
     snprintf(merged_path, sizeof(merged_path), "%s/merged.dd", output_folder);
     snprintf(info_path, sizeof(info_path), "%s/bdp.info", output_folder);
     snprintf(dislocker_file, sizeof(dislocker_file), "%s/dislocker-file", bitlocker_dir);
+    snprintf(ova_dir, sizeof(ova_dir), "%s/ova", output_folder);
+
+    // Zum Aufräumen: per qemu-nbd verbundene Blockgeräte aus einer OVA
+    char nbd_devices[OVA_MAX_DISKS][64];
+    int nbd_count = 0;
 
     if (!path_exists(input_image))
     {
@@ -202,7 +210,81 @@ int main(int argc, char *argv[])
     PartitionInfo bdp_info;
 
     // Eingabeformat ermitteln
-    if (is_ewf_path(input_image))
+    int have_selection = 0; // bei OVA werden Disk und Partition direkt hier gewählt
+    if (is_ova_path(input_image))
+    {
+        printf("[*] OVA-Datei erkannt: %s\n", input_image);
+        OvaDisk disks[OVA_MAX_DISKS];
+        int disk_count = extract_ova_disks(input_image, ova_dir, disks, OVA_MAX_DISKS);
+        if (disk_count < 0)
+            goto cleanup;
+        printf("[*] %d Disk(s) in der OVA.\n", disk_count);
+
+        // Alle Disks einhängen und nach BitLocker-Partitionen durchsuchen.
+        // Kandidaten werden über alle Disks hinweg gesammelt (Gerät + Partition).
+        char cand_dev[MAX_PARTITIONS][64];
+        char cand_label[MAX_PARTITIONS][160];
+        PartitionInfo cand_part[MAX_PARTITIONS];
+        int cand_count = 0;
+
+        for (int i = 0; i < disk_count && !interrupted; i++)
+        {
+            char dev[64];
+            printf("[*] Hänge Disk %d/%d ein (%s)...\n", i + 1, disk_count, disks[i].label);
+            if (!nbd_connect(disks[i].vmdk_path, dev, sizeof(dev)))
+                goto cleanup;
+            snprintf(nbd_devices[nbd_count++], sizeof(nbd_devices[0]), "%s", dev);
+
+            PartitionInfo parts[MAX_PARTITIONS];
+            int c = find_bitlocker_partitions(dev, parts, MAX_PARTITIONS);
+            if (c < 0)
+                goto cleanup;
+            for (int j = 0; j < c && cand_count < MAX_PARTITIONS; j++)
+            {
+                snprintf(cand_dev[cand_count], sizeof(cand_dev[0]), "%s", dev);
+                snprintf(cand_label[cand_count], sizeof(cand_label[0]), "%s", disks[i].label);
+                cand_part[cand_count] = parts[j];
+                cand_count++;
+            }
+        }
+        if (interrupted)
+            goto cleanup;
+        if (cand_count == 0)
+        {
+            fprintf(stderr, "[!] Keine BitLocker-Partition in der OVA gefunden.\n");
+            goto cleanup;
+        }
+
+        int chosen = 0;
+        if (cand_count > 1)
+        {
+            printf("[?] Mehrere BitLocker-Partitionen in der OVA gefunden:\n");
+            for (int k = 0; k < cand_count; k++)
+                printf("    [%d] Disk %s | Slot %03d: Start %" PRIu64 ", Länge %" PRIu64 " Sektoren (%" PRIu32 " Byte)%s%s\n",
+                       k + 1, cand_label[k], cand_part[k].slot, cand_part[k].start, cand_part[k].length,
+                       cand_part[k].sector_size, cand_part[k].description[0] ? ", " : "", cand_part[k].description);
+
+            char line[32];
+            while (1)
+            {
+                printf("[?] Welche soll entschlüsselt werden? (1-%d): ", cand_count);
+                if (!read_line(line, sizeof(line)))
+                    goto cleanup;
+                char *end;
+                long choice = strtol(line, &end, 10);
+                if (end != line && *end == '\0' && choice >= 1 && choice <= cand_count)
+                {
+                    chosen = (int)choice - 1;
+                    break;
+                }
+                printf("[!] Ungültige Eingabe.\n");
+            }
+        }
+        snprintf(raw_image_path, sizeof(raw_image_path), "%s", cand_dev[chosen]);
+        bdp_info = cand_part[chosen];
+        have_selection = 1;
+    }
+    else if (is_ewf_path(input_image))
     {
         printf("[*] EWF-Image erkannt: %s\n", input_image);
         if (!mount_ewf(input_image, ewf_dir, raw_image_path, sizeof(raw_image_path)))
@@ -216,19 +298,22 @@ int main(int argc, char *argv[])
     if (interrupted)
         goto cleanup;
 
-    // Partitionserkennung
-    printf("[*] Suche BitLocker-Partitionen...\n");
-    PartitionInfo partitions[MAX_PARTITIONS];
-    int count = find_bitlocker_partitions(raw_image_path, partitions, MAX_PARTITIONS);
-    if (count < 0)
-        goto cleanup;
-    if (count == 0)
+    // Partitionserkennung (bei OVA bereits oben erledigt)
+    if (!have_selection)
     {
-        fprintf(stderr, "[!] Keine BitLocker-Partition gefunden.\n");
-        goto cleanup;
+        printf("[*] Suche BitLocker-Partitionen...\n");
+        PartitionInfo partitions[MAX_PARTITIONS];
+        int count = find_bitlocker_partitions(raw_image_path, partitions, MAX_PARTITIONS);
+        if (count < 0)
+            goto cleanup;
+        if (count == 0)
+        {
+            fprintf(stderr, "[!] Keine BitLocker-Partition gefunden.\n");
+            goto cleanup;
+        }
+        if (!select_partition(partitions, count, &bdp_info))
+            goto cleanup;
     }
-    if (!select_partition(partitions, count, &bdp_info))
-        goto cleanup;
 
     printf("[*] BitLocker-Partition:\n");
     printf("    → Slot        : %03d\n", bdp_info.slot);
@@ -284,6 +369,17 @@ cleanup:
         cleaned &= unmount_fuse(ewf_dir);
     rmdir(bitlocker_dir);
     rmdir(ewf_dir);
+
+    // OVA: erst die nbd-Geräte lösen (dislocker las von dort), dann die
+    // extrahierten VMDKs entfernen. Sie sind nur ein Zwischenschritt und
+    // lassen sich jederzeit erneut aus der OVA gewinnen.
+    for (int i = 0; i < nbd_count; i++)
+        nbd_disconnect(nbd_devices[i]);
+    if (path_exists(ova_dir))
+    {
+        char *rm_argv[] = {"rm", "-rf", ova_dir, NULL};
+        run_cmd(rm_argv);
+    }
 
     if (!success)
     {
