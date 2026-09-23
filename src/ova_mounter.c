@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -16,6 +17,35 @@ int is_ova_path(const char *path)
     if (!dot || dot == path || (slash && dot < slash))
         return 0;
     return strcasecmp(dot + 1, "ova") == 0;
+}
+
+// Prüft, ob ein Programm über den PATH ausführbar ist, ohne es zu starten.
+// So lässt sich eine fehlende Abhängigkeit einmal klar melden, statt bei jedem
+// Startversuch die gleiche execvp-Fehlermeldung zu erzeugen.
+static int program_available(const char *name)
+{
+    const char *path = getenv("PATH");
+    if (!path || !*path)
+        path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    char buf[PATH_MAX];
+    for (const char *p = path; *p;)
+    {
+        const char *colon = strchr(p, ':');
+        size_t dirlen = colon ? (size_t)(colon - p) : strlen(p);
+        if (dirlen > 0 && dirlen + 1 + strlen(name) + 1 <= sizeof(buf))
+        {
+            memcpy(buf, p, dirlen);
+            buf[dirlen] = '/';
+            snprintf(buf + dirlen + 1, sizeof(buf) - dirlen - 1, "%s", name);
+            if (access(buf, X_OK) == 0)
+                return 1;
+        }
+        if (!colon)
+            break;
+        p = colon + 1;
+    }
+    return 0;
 }
 
 // Prüft, ob unter /sys/block/nbdN/pid ein aktiver qemu-nbd-Prozess hängt.
@@ -64,6 +94,12 @@ int nbd_disconnect(const char *device)
 
 int nbd_connect(const char *vmdk_path, char *device_out, size_t len)
 {
+    if (!program_available("qemu-nbd"))
+    {
+        fprintf(stderr, "[!] 'qemu-nbd' nicht gefunden. Bitte qemu-utils installieren "
+                        "(sudo apt install qemu-utils) oder ./scripts/install.sh ausführen.\n");
+        return 0;
+    }
     if (!nbd_module_ready())
     {
         fprintf(stderr, "[!] nbd-Kernelmodul nicht verfügbar (modprobe nbd fehlgeschlagen).\n");
