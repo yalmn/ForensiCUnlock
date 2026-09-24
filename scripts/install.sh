@@ -14,3 +14,6 @@ make
 
 echo "[+] Build erfolgreich abgeschlossen."
 echo "[+] Starte mit: sudo ./forensic_unlock <image> <recovery-key> [ausgabeordner]"
+echo "[i] Hinweis: EOW-/Windows-11-BitLocker-Volumes brauchen ein dislocker aus dem"
+echo "    git-master (Distro-0.7.2 reicht nicht). Anleitung: README, Abschnitt"
+echo "    'EOW- / Windows-11-Volumes'."
