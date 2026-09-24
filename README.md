@@ -64,6 +64,37 @@ das `nbd`-Kernelmodul verfügbar sein; das Tool lädt es bei Bedarf mit `modprob
 In einer VM oder auf Blech funktioniert das direkt, in einem Docker-Container nur mit
 `--privileged` und Zugriff auf `/dev/nbd*`.
 
+### EOW- / Windows-11-Volumes (neueres dislocker nötig)
+
+Neuere BitLocker-Volumes (Windows 10/11, besonders „nur belegten Speicherplatz
+verschlüsseln") nutzen **EOW (Encrypt-On-Write)**. Das Distro-`dislocker` **0.7.2**
+bricht bei solchen Volumes mit `EOW volume GUID not supported` / `Cannot parse volume
+header` ab. Ein aus dem **git-master** gebautes dislocker (0.7.3, getestet mit
+`master:37ceb7b`) entschlüsselt sie read-only. Für normale BitLocker-Volumes reicht das
+Distro-Paket — dieser Schritt ist nur für EOW/Windows 11 nötig.
+
+```bash
+# Build-Abhängigkeiten (master braucht fuse3)
+sudo apt install -y git cmake make gcc libfuse3-dev
+
+# mbedTLS 3 aus dem Release-Tarball (Distros liefern oft nur 2.28; master braucht v3)
+cd /tmp
+wget https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
+tar xf mbedtls-3.6.2.tar.bz2 && cd mbedtls-3.6.2
+cmake -B build -DENABLE_TESTING=Off -DUSE_SHARED_MBEDTLS_LIBRARY=On
+cmake --build build -j"$(nproc)" && sudo cmake --install build && sudo ldconfig
+
+# dislocker aus dem git-master gegen mbedTLS 3 bauen
+cd /tmp && git clone https://github.com/Aorimn/dislocker.git
+cd dislocker && cmake -DCMAKE_PREFIX_PATH=/usr/local . && make
+sudo make install && sudo ldconfig
+dislocker -h 2>&1 | grep -i version   # sollte "master:…" zeigen, nicht 0.7.2
+```
+
+ForensiCUnlock ruft immer das `dislocker` aus dem `PATH` auf (unter `sudo` liegt
+`/usr/local/bin` vor `/usr/bin`), nutzt also nach dem `make install` automatisch die neue
+Version — am Tool selbst ist nichts zu ändern.
+
 ### Projekt klonen & kompilieren
 
 ```bash
