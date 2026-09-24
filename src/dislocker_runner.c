@@ -82,7 +82,9 @@ int run_dislocker(const char *image_path, uint64_t offset_bytes, KeyMode mode, c
     snprintf(file, sizeof(file), "%s/dislocker-file", output_dir);
     if (!ok || access(file, R_OK) != 0)
     {
-        fprintf(stderr, "[!] dislocker konnte das Volume nicht entschlüsseln (falscher Schlüssel?).\n");
+        fprintf(stderr, "[!] dislocker konnte das Volume nicht öffnen. Mögliche Ursachen: "
+                        "falscher Schlüssel ODER ein von dislocker nicht unterstütztes Volume "
+                        "(z. B. EOW / neuere BitLocker-Variante). Details siehe dislocker-Ausgabe oben.\n");
         return 0;
     }
     return 1;
