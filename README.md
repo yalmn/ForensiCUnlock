@@ -27,12 +27,14 @@
 
 ## Ablauf
 
-1. **Bereitstellen:** Bei `.E01` prüft das Tool die Segmente und hängt das Image mit `ewfmount` als RAW-Datei ein. Bei `.ova` werden die VMDK-Disks aus dem Archiv extrahiert und read-only per `qemu-nbd` als Blockgerät (`/dev/nbdX`) eingehängt.
-2. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft. Bei mehreren OVA-Disks werden alle durchsucht und die Treffer zur Auswahl angeboten.
-3. **Kontrolle:** Die gefundene Partition und die komplette Partitionstabelle werden angezeigt. Weiter geht es erst nach ENTER.
-4. **Entschlüsseln:** `dislocker` stellt die entschlüsselte Partition read-only als `dislocker-file` bereit.
-5. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach.
-6. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, `qemu-nbd`-Geräte gelöst, extrahierte VMDKs und Hilfsordner gelöscht.
+1. **Abhängigkeiten prüfen:** Vor dem Lauf prüft das Tool, ob alle nötigen Programme (`mmls`, `dislocker`, `dislocker-metadata`, je nach Eingabe `qemu-nbd`/`tar` bzw. `ewfmount`) im `PATH` sind. Fehlt etwas, wird `scripts/install.sh` ausgeführt und erneut geprüft.
+2. **Bereitstellen:** Bei `.E01` prüft das Tool die Segmente und hängt das Image mit `ewfmount` als RAW-Datei ein. Bei `.ova` werden die VMDK-Disks aus dem Archiv extrahiert und read-only per `qemu-nbd` als Blockgerät (`/dev/nbdX`) eingehängt.
+3. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft. Bei mehreren OVA-Disks werden alle durchsucht und die Treffer zur Auswahl angeboten.
+4. **Kontrolle:** Die gefundene Partition und die komplette Partitionstabelle werden angezeigt. Weiter geht es erst nach ENTER.
+5. **Entschlüsseln:** `dislocker` stellt die entschlüsselte Partition read-only als `dislocker-file` bereit.
+6. **Metadaten sichern:** `dislocker-metadata` schreibt die (unverschlüsselten) BitLocker-Metadaten – Verschlüsselungsart, Volume-GUID, Protektoren, Offsets – nach `metadata.txt` in den Ausgabeordner.
+7. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach.
+8. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, `qemu-nbd`-Geräte gelöst, extrahierte VMDKs und Hilfsordner gelöscht.
 
 ---
 
@@ -159,8 +161,9 @@ bei den anderen Eingaben.
 
 ```bash
 /mnt/output/case01/
-├── merged.dd   # vollständiges entschlüsseltes Image
-└── bdp.info    # Lage der entschlüsselten Partition (Slot, Start, Ende, Sektorgröße, Offset)
+├── merged.dd     # vollständiges entschlüsseltes Image
+├── metadata.txt  # BitLocker-Metadaten (dislocker-metadata): Verschlüsselungsart, GUID, Protektoren
+└── bdp.info      # Lage der entschlüsselten Partition (Slot, Start, Ende, Sektorgröße, Offset)
 ```
 
 Die entschlüsselte Partition lässt sich danach zum Beispiel so ansehen:

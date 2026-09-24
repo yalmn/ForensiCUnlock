@@ -151,6 +151,15 @@ static void test_mountpoint(void)
     }
 }
 
+static void test_program_in_path(void)
+{
+    // Ein sicher vorhandenes Programm wird gefunden, ein erfundenes nicht.
+    CHECK(program_in_path("sh") == 1);
+    CHECK(program_in_path("dieses-programm-gibt-es-ganz-sicher-nicht-42") == 0);
+    // Ein absoluter Pfad ist kein PATH-Eintrag und wird hier nicht aufgelöst.
+    CHECK(program_in_path("/bin/sh") == 0);
+}
+
 /* image_converter */
 
 static void test_is_ewf_path(void)
@@ -587,6 +596,7 @@ int main(void)
     test_run_cmd();
     test_make_dir();
     test_mountpoint();
+    test_program_in_path();
     test_is_ewf_path();
     test_is_ova_path();
     test_ewf_segment_ext();
