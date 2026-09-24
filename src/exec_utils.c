@@ -110,6 +110,32 @@ int make_dir(const char *path)
     return stat(buf, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+int program_in_path(const char *name)
+{
+    const char *path = getenv("PATH");
+    if (!path || !*path)
+        path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    char buf[PATH_MAX];
+    for (const char *p = path; *p;)
+    {
+        const char *colon = strchr(p, ':');
+        size_t dirlen = colon ? (size_t)(colon - p) : strlen(p);
+        if (dirlen > 0 && dirlen + 1 + strlen(name) + 1 <= sizeof(buf))
+        {
+            memcpy(buf, p, dirlen);
+            buf[dirlen] = '/';
+            snprintf(buf + dirlen + 1, sizeof(buf) - dirlen - 1, "%s", name);
+            if (access(buf, X_OK) == 0)
+                return 1;
+        }
+        if (!colon)
+            break;
+        p = colon + 1;
+    }
+    return 0;
+}
+
 int is_mountpoint(const char *path)
 {
     struct stat st, parent;

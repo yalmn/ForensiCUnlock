@@ -100,6 +100,89 @@ static int path_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+// Hängt einen fehlenden Programmnamen an eine kommaseparierte Liste an.
+static void append_missing(char *list, size_t len, const char *name)
+{
+    if (list[0])
+        strncat(list, ", ", len - strlen(list) - 1);
+    strncat(list, name, len - strlen(list) - 1);
+}
+
+// Liefert das Verzeichnis der laufenden Binärdatei (für scripts/install.sh).
+static int exe_dir(char *out, size_t len)
+{
+    ssize_t n = readlink("/proc/self/exe", out, len - 1);
+    if (n <= 0)
+        return 0;
+    out[n] = '\0';
+    char *slash = strrchr(out, '/');
+    if (slash)
+        *slash = '\0';
+    return 1;
+}
+
+// Prüft alle für diesen Lauf nötigen externen Programme. Fehlt etwas, wird einmal
+// scripts/install.sh ausgeführt und danach erneut geprüft.
+static int ensure_dependencies(const char *input_image)
+{
+    const char *always[] = {"mmls", "dislocker", "dislocker-metadata", NULL};
+    const char *ova_tools[] = {"qemu-nbd", "tar", NULL};
+    const char *ewf_tools[] = {"ewfmount", NULL};
+
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        char missing[512];
+        missing[0] = '\0';
+
+        for (int i = 0; always[i]; i++)
+        {
+            if (!program_in_path(always[i]))
+                append_missing(missing, sizeof(missing), always[i]);
+        }
+        if (is_ova_path(input_image))
+        {
+            for (int i = 0; ova_tools[i]; i++)
+                if (!program_in_path(ova_tools[i]))
+                    append_missing(missing, sizeof(missing), ova_tools[i]);
+        }
+        else if (is_ewf_path(input_image))
+        {
+            for (int i = 0; ewf_tools[i]; i++)
+                if (!program_in_path(ewf_tools[i]))
+                    append_missing(missing, sizeof(missing), ewf_tools[i]);
+        }
+
+        if (missing[0] == '\0')
+            return 1; // alles vorhanden
+
+        if (attempt == 0)
+        {
+            fprintf(stderr, "[!] Fehlende Abhängigkeiten: %s\n", missing);
+            char dir[PATH_MAX], script[PATH_MAX + 32];
+            if (exe_dir(dir, sizeof(dir)) &&
+                snprintf(script, sizeof(script), "%s/scripts/install.sh", dir) < (int)sizeof(script) &&
+                path_exists(script))
+            {
+                printf("[*] Führe %s aus, um die Abhängigkeiten zu installieren...\n", script);
+                char *argv[] = {"bash", script, NULL};
+                run_cmd(argv);
+            }
+            else
+            {
+                fprintf(stderr, "[!] scripts/install.sh nicht gefunden. Bitte Abhängigkeiten manuell installieren.\n");
+                return 0;
+            }
+        }
+        else
+        {
+            fprintf(stderr, "[!] Nach install.sh fehlen weiterhin: %s\n", missing);
+            fprintf(stderr, "[!] Hinweis: EOW-/Windows-11-Volumes brauchen dislocker aus dem git-master (siehe README).\n");
+            return 0;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     // Zeilenweise ausgeben, damit Logs (z. B. mit tee) sofort aktuell sind
@@ -190,6 +273,15 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[!] VMK-Datei nicht gefunden: %s\n", key);
         return 1;
     }
+
+    // Vor dem eigentlichen Lauf: alle benötigten Programme prüfen (ggf. install.sh)
+    printf("[*] Prüfe Abhängigkeiten...\n");
+    if (!ensure_dependencies(input_image))
+    {
+        fprintf(stderr, "[!] Abhängigkeiten unvollständig. Vorgang abgebrochen.\n");
+        return 1;
+    }
+
     if (path_exists(merged_path))
     {
         fprintf(stderr, "[!] %s existiert bereits. Bitte einen anderen Ausgabeordner wählen.\n", merged_path);
@@ -352,6 +444,16 @@ int main(int argc, char *argv[])
     if (interrupted)
         goto cleanup;
 
+    // BitLocker-Metadaten sichern (unverschlüsselt: Verschlüsselungsart, Volume-GUID,
+    // Protektoren, Offsets). Nicht kritisch – ein Fehler bricht den Lauf nicht ab.
+    printf("[*] Sichere BitLocker-Metadaten (dislocker-metadata)...\n");
+    char metadata_path[PATH_MAX + 24];
+    snprintf(metadata_path, sizeof(metadata_path), "%s/metadata.txt", output_folder);
+    if (dump_dislocker_metadata(raw_image_path, bdp_info.start * bdp_info.sector_size, metadata_path))
+        printf("[+] Metadaten: %s\n", metadata_path);
+    else
+        fprintf(stderr, "[!] Metadaten konnten nicht gesichert werden (nicht kritisch).\n");
+
     // Zusammenführen
     printf("[*] Erzeuge entschlüsseltes Abbild (merged.dd)...\n");
     if (!merge_image(raw_image_path, dislocker_file, &bdp_info, merged_path, &interrupted))
@@ -404,5 +506,6 @@ cleanup:
 
     printf("\n[+] Vorgang abgeschlossen\n");
     printf("[+] Entschlüsseltes Image: \033[1;32m%s\033[0m\n", merged_path);
+    printf("[+] Metadaten:             %s/metadata.txt\n", output_folder);
     return cleaned ? 0 : 1;
 }

@@ -40,6 +40,16 @@ int close_cmd_read(FILE *fp, pid_t pid);
 int make_dir(const char *path);
 
 /**
+ * Prüft, ob ein Programm über den PATH ausführbar ist, ohne es zu starten.
+ * So lässt sich eine fehlende Abhängigkeit einmal klar melden, statt bei jedem
+ * Startversuch die execvp-Fehlermeldung zu erzeugen.
+ *
+ * @param name  Programmname (z. B. "dislocker").
+ * @return      1 wenn im PATH ausführbar gefunden, sonst 0.
+ */
+int program_in_path(const char *name);
+
+/**
  * Prüft, ob unter dem Pfad ein Dateisystem eingehängt ist.
  *
  * @return  1 wenn eingehängt, sonst 0.

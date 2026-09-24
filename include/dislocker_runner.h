@@ -42,4 +42,16 @@ int build_key_args(KeyMode mode, const char *key, const char *out[2], char **hea
  */
 int run_dislocker(const char *image_path, uint64_t offset_bytes, KeyMode mode, const char *key, const char *output_dir);
 
+/**
+ * Schreibt die BitLocker-Metadaten des Volumes mit dislocker-metadata als Text
+ * nach out_file. Metadaten sind unverschlüsselt, es wird kein Schlüssel benötigt.
+ * Enthält Verschlüsselungsmethode, Volume-GUID, Protektoren und Offsets.
+ *
+ * @param image_path    Pfad zum Image oder Blockgerät.
+ * @param offset_bytes  Beginn des BitLocker-Volumes im Image in Byte.
+ * @param out_file      Zieldatei für die Textausgabe (z. B. metadata.txt).
+ * @return              1 bei Erfolg, 0 bei Fehler.
+ */
+int dump_dislocker_metadata(const char *image_path, uint64_t offset_bytes, const char *out_file);
+
 #endif

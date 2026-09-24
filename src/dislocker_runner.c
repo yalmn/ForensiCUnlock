@@ -89,3 +89,40 @@ int run_dislocker(const char *image_path, uint64_t offset_bytes, KeyMode mode, c
     }
     return 1;
 }
+
+int dump_dislocker_metadata(const char *image_path, uint64_t offset_bytes, const char *out_file)
+{
+    char offset[32];
+    snprintf(offset, sizeof(offset), "%" PRIu64, offset_bytes);
+
+    // dislocker-metadata -V <volume> -o <offset>  (kleines -o, kein Schlüssel nötig)
+    char *argv[] = {"dislocker-metadata", "-V", (char *)image_path, "-o", offset, NULL};
+
+    pid_t pid;
+    FILE *fp = run_cmd_read(argv, &pid);
+    if (!fp)
+    {
+        fprintf(stderr, "[!] dislocker-metadata konnte nicht gestartet werden.\n");
+        return 0;
+    }
+
+    FILE *out = fopen(out_file, "w");
+    if (!out)
+    {
+        perror("[!] Metadaten-Datei konnte nicht geschrieben werden");
+        // Stream leeren, damit das Kind nicht auf eine volle Pipe blockiert
+        char drain[4096];
+        while (fread(drain, 1, sizeof(drain), fp) > 0)
+            ;
+        close_cmd_read(fp, pid);
+        return 0;
+    }
+
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0)
+        fwrite(buf, 1, n, out);
+    fclose(out);
+
+    return close_cmd_read(fp, pid);
+}
