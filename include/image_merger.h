@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include "eow.h"
 #include "partition_parser.h"
 
 /**
@@ -32,10 +33,12 @@ int copy_range(int in_fd, uint64_t offset, uint64_t len, int out_fd, const volat
  * @param decrypted_file  Entschlüsselte Partition (dislocker-file).
  * @param info            Lage der Partition im Original.
  * @param merged_path     Pfad der neuen Image-Datei (merged.dd).
+ * @param eow             EOW-Bereiche (siehe eow.h) oder NULL. Unverschlüsselte Bereiche
+ *                        kommen dann unverändert aus dem Original, Verwaltungsdaten als Nullen.
  * @param stop            Abbruch-Flag (z. B. durch Ctrl+C gesetzt), darf NULL sein.
  * @return                1 bei Erfolg, 0 bei Fehler.
  */
 int merge_image(const char *raw_image, const char *decrypted_file, const PartitionInfo *info,
-                const char *merged_path, const volatile sig_atomic_t *stop);
+                const char *merged_path, const EowMap *eow, const volatile sig_atomic_t *stop);
 
 #endif

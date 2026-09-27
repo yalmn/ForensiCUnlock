@@ -32,9 +32,10 @@
 3. **Partition finden:** `mmls` liest die Partitionstabelle. Jede Partition wird auf die BitLocker-Signatur (`-FVE-FS-` bzw. die BitLocker-GUID bei To Go) geprüft. Bei mehreren OVA-Disks werden alle durchsucht und die Treffer zur Auswahl angeboten.
 4. **Kontrolle:** Die gefundene Partition und die komplette Partitionstabelle werden angezeigt. Weiter geht es erst nach ENTER.
 5. **Entschlüsseln:** `dislocker` stellt die entschlüsselte Partition read-only als `dislocker-file` bereit.
-6. **Metadaten sichern:** `dislocker-metadata` schreibt die (unverschlüsselten) BitLocker-Metadaten – Verschlüsselungsart, Volume-GUID, Protektoren, Offsets – nach `metadata.txt` in den Ausgabeordner.
-7. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach.
-8. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, `qemu-nbd`-Geräte gelöst, extrahierte VMDKs und Hilfsordner gelöscht.
+6. **Metadaten sichern:** `dislocker-metadata` schreibt die (unverschlüsselten) BitLocker-Metadaten (Verschlüsselungsart, Volume-GUID, Protektoren, Offsets) nach `metadata.txt` in den Ausgabeordner.
+7. **EOW prüfen:** Bei Volumes mit Encrypt-on-Write liest das Tool die EOW-Bitmap aus dem Original (siehe unten). Sind die EOW-Daten beschädigt, bricht es ab.
+8. **Zusammenführen:** `merged.dd` entsteht aus dem Bereich vor der Partition, der entschlüsselten Partition und dem Bereich danach. Bei EOW kommen die nie verschlüsselten Blöcke unverändert aus dem Original.
+9. **Aufräumen:** `dislocker` und `ewfmount` werden ausgehängt, `qemu-nbd`-Geräte gelöst, extrahierte VMDKs und Hilfsordner gelöscht.
 
 ---
 
@@ -72,8 +73,12 @@ Neuere BitLocker-Volumes (Windows 10/11, besonders „nur belegten Speicherplatz
 verschlüsseln") nutzen **EOW (Encrypt-On-Write)**. Das Distro-`dislocker` **0.7.2**
 bricht bei solchen Volumes mit `EOW volume GUID not supported` / `Cannot parse volume
 header` ab. Ein aus dem **git-master** gebautes dislocker (0.7.3, getestet mit
-`master:37ceb7b`) entschlüsselt sie read-only. Für normale BitLocker-Volumes reicht das
-Distro-Paket — dieser Schritt ist nur für EOW/Windows 11 nötig.
+`master:37ceb7b`) öffnet sie, kann die EOW-Informationen aber nicht auswerten
+(`get_eow_information::Error` in `metadata.txt`) und entschlüsselt deshalb das ganze
+Volume. Bei EOW bleiben jedoch Blöcke im Klartext, die BitLocker nie verschlüsselt hat.
+dislocker allein macht sie unbrauchbar. ForensiCUnlock gleicht das aus (siehe
+[Encrypt-on-Write](#encrypt-on-write-eow)). Für normale BitLocker-Volumes reicht das
+Distro-Paket, dieser Schritt ist nur für EOW/Windows 11 nötig.
 
 ```bash
 # Build-Abhängigkeiten (master braucht fuse3)
@@ -95,7 +100,7 @@ dislocker -h 2>&1 | grep -i version   # sollte "master:…" zeigen, nicht 0.7.2
 
 ForensiCUnlock ruft immer das `dislocker` aus dem `PATH` auf (unter `sudo` liegt
 `/usr/local/bin` vor `/usr/bin`), nutzt also nach dem `make install` automatisch die neue
-Version — am Tool selbst ist nichts zu ändern.
+Version. Am Tool selbst ist nichts zu ändern.
 
 ### Projekt klonen & kompilieren
 
@@ -163,8 +168,35 @@ bei den anderen Eingaben.
 /mnt/output/case01/
 ├── merged.dd     # vollständiges entschlüsseltes Image
 ├── metadata.txt  # BitLocker-Metadaten (dislocker-metadata): Verschlüsselungsart, GUID, Protektoren
+├── eow.txt       # nur bei EOW: Block-Maps und je Bereich die Quelle (Original oder Nullen)
 └── bdp.info      # Lage der entschlüsselten Partition (Slot, Start, Ende, Sektorgröße, Offset)
 ```
+
+### Encrypt-on-Write (EOW)
+
+Bei EOW (Windows 10/11, „nur belegten Speicherplatz verschlüsseln“) verschlüsselt
+BitLocker vorhandene Daten nicht vollständig. Welche 4-MiB-Blöcke verschlüsselt sind,
+steht in einer Bitmap in den BitLocker-Metadaten. Blöcke ohne gesetztes Bit liegen im
+Klartext auf dem Datenträger. Entschlüsselt man sie trotzdem, entstehen Zufallsdaten.
+Betroffen sind auch belegte NTFS-Strukturen wie MFT-Einträge und Verzeichnisindizes.
+
+ForensiCUnlock liest dafür aus dem Original den EOW-Deskriptor, die Block-Maps und je
+Block-Map den Block-Record mit der höchsten Sequenznummer. Alle Strukturen werden über
+ihre CRC32 geprüft. Beim Zusammenführen gilt dann:
+
+| Bereich | Quelle in `merged.dd` |
+|---|---|
+| Bit gesetzt (verschlüsselt) | entschlüsselte Ausgabe von dislocker |
+| Bit nicht gesetzt | Original, unverändert |
+| EOW-Deskriptoren, Block-Maps, Relocation-Log | Nullen |
+
+Das entspricht dem Verhalten von libbde (libyal). Das Format folgt der
+libbde-Dokumentation „BitLocker Drive Encryption (BDE) format“, Abschnitte zu EOW.
+Freie NTFS-Cluster in verschlüsselten Blöcken können alten Klartext enthalten; sie
+werden wie die übrigen Cluster des Blocks entschlüsselt und sind danach unbrauchbar.
+Das betrifft keine belegten Daten. Sind die EOW-Daten beschädigt oder unvollständig,
+bricht ForensiCUnlock ab, statt ein fehlerhaftes Image zu erzeugen. `eow.txt` enthält
+alle Block-Maps und jeden Bereich mit seiner Quelle.
 
 Die entschlüsselte Partition lässt sich danach zum Beispiel so ansehen:
 

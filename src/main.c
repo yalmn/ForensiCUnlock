@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include <unistd.h>
 
 #include "dislocker_runner.h"
+#include "eow.h"
 #include "exec_utils.h"
 #include "image_converter.h"
 #include "image_merger.h"
@@ -445,7 +447,7 @@ int main(int argc, char *argv[])
         goto cleanup;
 
     // BitLocker-Metadaten sichern (unverschlüsselt: Verschlüsselungsart, Volume-GUID,
-    // Protektoren, Offsets). Nicht kritisch – ein Fehler bricht den Lauf nicht ab.
+    // Protektoren, Offsets). Nicht kritisch, ein Fehler bricht den Lauf nicht ab.
     printf("[*] Sichere BitLocker-Metadaten (dislocker-metadata)...\n");
     char metadata_path[PATH_MAX + 24];
     snprintf(metadata_path, sizeof(metadata_path), "%s/metadata.txt", output_folder);
@@ -454,9 +456,50 @@ int main(int argc, char *argv[])
     else
         fprintf(stderr, "[!] Metadaten konnten nicht gesichert werden (nicht kritisch).\n");
 
+    // Encrypt-on-Write: dislocker entschlüsselt das ganze Volume, auch die Blöcke,
+    // die BitLocker nie verschlüsselt hat. Diese Bereiche kommen deshalb aus dem Original.
+    printf("[*] Prüfe auf BitLocker Encrypt-on-Write (EOW)...\n");
+    EowMap eow;
+    char eow_err[256];
+    int raw_fd = open(raw_image_path, O_RDONLY);
+    if (raw_fd < 0)
+    {
+        perror("[!] Original-Image konnte nicht geöffnet werden");
+        goto cleanup;
+    }
+    int eow_state = eow_read(raw_fd, bdp_info.start * bdp_info.sector_size, bdp_info.length * bdp_info.sector_size,
+                             &eow, eow_err, sizeof(eow_err));
+    close(raw_fd);
+    if (eow_state < 0)
+    {
+        fprintf(stderr, "[!] EOW-Volume erkannt, aber die EOW-Informationen sind nicht verlässlich lesbar: %s\n",
+                eow_err);
+        fprintf(stderr, "[!] Ohne sie wären unverschlüsselte Bereiche in merged.dd zerstört. Vorgang abgebrochen.\n");
+        goto cleanup;
+    }
+    if (eow_state == 1)
+        printf("[+] EOW erkannt: %zu Block-Maps, %" PRIu64 " Byte unverschlüsselt (aus dem Original), "
+               "%" PRIu64 " Byte Verwaltungsdaten (Nullen)\n",
+               eow.map_count, eow.plain_bytes, eow.meta_bytes);
+    else
+        printf("[*] Kein EOW-Volume, das ganze Volume ist verschlüsselt.\n");
+
     // Zusammenführen
     printf("[*] Erzeuge entschlüsseltes Abbild (merged.dd)...\n");
-    if (!merge_image(raw_image_path, dislocker_file, &bdp_info, merged_path, &interrupted))
+    int merged_ok = merge_image(raw_image_path, dislocker_file, &bdp_info, merged_path,
+                                eow_state == 1 ? &eow : NULL, &interrupted);
+    if (merged_ok && eow_state == 1)
+    {
+        char eow_path[PATH_MAX + 16];
+        snprintf(eow_path, sizeof(eow_path), "%s/eow.txt", output_folder);
+        if (eow_write_report(&eow, eow_path))
+            printf("[+] EOW-Protokoll: %s\n", eow_path);
+        else
+            fprintf(stderr, "[!] EOW-Protokoll konnte nicht geschrieben werden: %s\n", eow_path);
+    }
+    if (eow_state == 1)
+        eow_free(&eow);
+    if (!merged_ok)
     {
         fprintf(stderr, "[!] Fehler beim Zusammenführen der Datenbereiche.\n");
         goto cleanup;

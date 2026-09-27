@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "dislocker_runner.h"
+#include "eow.h"
 #include "exec_utils.h"
 #include "image_converter.h"
 #include "image_merger.h"
@@ -460,7 +461,7 @@ static void test_merge_image(void)
 
     PartitionInfo p = {.slot = 2, .start = START, .length = LENGTH, .sector_size = SECTOR};
     unlink(merged);
-    CHECK(merge_image(raw, dec, &p, merged, NULL) == 1);
+    CHECK(merge_image(raw, dec, &p, merged, NULL, NULL) == 1);
 
     size_t len;
     unsigned char *result = read_file(merged, &len);
@@ -475,7 +476,7 @@ static void test_merge_image(void)
     free(result);
 
     // Bestehende Datei wird nicht überschrieben und bleibt unverändert
-    CHECK(merge_image(raw, dec, &p, merged, NULL) == 0);
+    CHECK(merge_image(raw, dec, &p, merged, NULL, NULL) == 0);
     result = read_file(merged, &len);
     CHECK(result && len == TOTAL * SECTOR);
     free(result);
@@ -483,10 +484,10 @@ static void test_merge_image(void)
 
     // Partition am Anfang und am Ende des Images
     PartitionInfo first = {.slot = 1, .start = 0, .length = LENGTH, .sector_size = SECTOR};
-    CHECK(merge_image(raw, dec, &first, merged, NULL) == 1);
+    CHECK(merge_image(raw, dec, &first, merged, NULL, NULL) == 1);
     unlink(merged);
     PartitionInfo last = {.slot = 1, .start = TOTAL - LENGTH, .length = LENGTH, .sector_size = SECTOR};
-    CHECK(merge_image(raw, dec, &last, merged, NULL) == 1);
+    CHECK(merge_image(raw, dec, &last, merged, NULL, NULL) == 1);
     result = read_file(merged, &len);
     CHECK(result && len == TOTAL * SECTOR && memcmp(result + (TOTAL - LENGTH) * SECTOR, plain, LENGTH * SECTOR) == 0);
     free(result);
@@ -498,7 +499,7 @@ static void test_merge_image(void)
     char dec4k[PATH_MAX];
     tmp_path(dec4k, sizeof(dec4k), "dislocker-4k");
     write_file(dec4k, plain, k4.length * 4096);
-    CHECK(merge_image(raw, dec4k, &k4, merged, NULL) == 1);
+    CHECK(merge_image(raw, dec4k, &k4, merged, NULL, NULL) == 1);
     result = read_file(merged, &len);
     CHECK(result && len == TOTAL * SECTOR &&
           memcmp(result + k4.start * 4096, plain, k4.length * 4096) == 0 &&
@@ -507,26 +508,278 @@ static void test_merge_image(void)
     unlink(merged);
 
     // Größe der entschlüsselten Partition passt nicht: kein merged.dd
-    CHECK(merge_image(raw, wrong, &p, merged, NULL) == 0);
+    CHECK(merge_image(raw, wrong, &p, merged, NULL, NULL) == 0);
     CHECK(access(merged, F_OK) != 0);
 
     // Partition ragt über das Image hinaus
     PartitionInfo too_big = {.slot = 2, .start = TOTAL - 10, .length = LENGTH, .sector_size = SECTOR};
-    CHECK(merge_image(raw, dec, &too_big, merged, NULL) == 0);
+    CHECK(merge_image(raw, dec, &too_big, merged, NULL, NULL) == 0);
     CHECK(access(merged, F_OK) != 0);
 
     // Abbruch: halbe Datei wird entfernt
     volatile sig_atomic_t stop = 1;
-    CHECK(merge_image(raw, dec, &p, merged, &stop) == 0);
+    CHECK(merge_image(raw, dec, &p, merged, NULL, &stop) == 0);
     CHECK(access(merged, F_OK) != 0);
 
     // Fehlende Eingaben
-    CHECK(merge_image("/gibt/es/nicht", dec, &p, merged, NULL) == 0);
-    CHECK(merge_image(raw, "/gibt/es/nicht", &p, merged, NULL) == 0);
-    CHECK(merge_image(raw, dec, &p, "/gibt/es/nicht/merged.dd", NULL) == 0);
+    CHECK(merge_image("/gibt/es/nicht", dec, &p, merged, NULL, NULL) == 0);
+    CHECK(merge_image(raw, "/gibt/es/nicht", &p, merged, NULL, NULL) == 0);
+    CHECK(merge_image(raw, dec, &p, "/gibt/es/nicht/merged.dd", NULL, NULL) == 0);
 
     free(orig);
     free(plain);
+}
+
+
+/* eow */
+
+static void put32(unsigned char *p, uint32_t v)
+{
+    for (int i = 0; i < 4; i++)
+        p[i] = (unsigned char)(v >> (8 * i));
+}
+
+static void put64(unsigned char *p, uint64_t v)
+{
+    put32(p, (uint32_t)v);
+    put32(p + 4, (uint32_t)(v >> 32));
+}
+
+// Prüfsumme setzen wie BitLocker: CRC32 über len Byte mit Prüfsummenfeld 0
+static void seal(unsigned char *p, size_t len, size_t field)
+{
+    memset(p + field, 0, 4);
+    put32(p + field, eow_crc32(p, len));
+}
+
+enum
+{
+    EOW_VOL = 0x10000,   // 64 KiB Volume
+    EOW_BLOCK = 0x1000,  // 4 KiB je Bit
+    EOW_DESC = 0x2000,   // Deskriptor
+    EOW_LOG = 0x2800,    // Relocation-Log
+    EOW_MAP = 0x3000,    // Block-Map, Records bei +0x200 und +0x400
+    EOW_REGION = 0x4000, // beschriebener Bereich
+    EOW_REGION_SIZE = 0xB800
+};
+
+static void eow_record(unsigned char *vol, uint32_t at, uint64_t seq, uint16_t bitmap)
+{
+    unsigned char *r = vol + at;
+    memset(r, 0, 512);
+    memcpy(r, "FVE-EOWBR\0", 10);
+    r[10] = 36;
+    put32(r + 12, 512);
+    put32(r + 16, 12);
+    put64(r + 20, seq);
+    r[36] = (unsigned char)bitmap;
+    r[37] = (unsigned char)(bitmap >> 8);
+    seal(r, 512, 32);
+}
+
+// Volume mit EOW: Bits 0,1,4,6..10 verschlüsselt, 2,3,5,11 im Klartext.
+static void build_eow_volume(unsigned char *vol)
+{
+    memset(vol, 0, EOW_VOL);
+    memcpy(vol + 3, "-FVE-FS-", 8);
+    static const unsigned char id[16] = {0x3b, 0x4d, 0xa8, 0x92, 0x80, 0xdd, 0x0e, 0x4d,
+                                         0x9e, 0x4e, 0xb1, 0xe3, 0x28, 0x4e, 0xae, 0xd8};
+    memcpy(vol + 0xA0, id, 16);
+    put64(vol + 0xC8, EOW_DESC);
+
+    unsigned char *d = vol + EOW_DESC;
+    memcpy(d, "FVE-EOW\0", 8);
+    d[8] = 56;
+    d[10] = 64; // Kopf plus eine Block-Map
+    put32(d + 12, 512);
+    put32(d + 16, 512);
+    put32(d + 20, EOW_BLOCK);
+    put32(d + 24, 0x400);
+    put32(d + 32, 1);
+    put64(d + 40, EOW_DESC);
+    put64(d + 56, EOW_MAP);
+    seal(d, 64, 36);
+
+    unsigned char *m = vol + EOW_MAP;
+    memcpy(m, "FVE-EOWBM\0", 10);
+    m[10] = 60;
+    put32(m + 12, 0x600);
+    put64(m + 20, EOW_REGION);
+    put64(m + 28, EOW_REGION_SIZE);
+    put64(m + 36, EOW_LOG);
+    put32(m + 44, 0x200);
+    put32(m + 48, 0x400);
+    put32(m + 52, 512);
+    seal(m, 512, 56);
+
+    eow_record(vol, EOW_MAP + 0x200, 5, 0xFFFF);          // älter: alles verschlüsselt
+    eow_record(vol, EOW_MAP + 0x400, 7, 0x7D3);           // maßgeblich
+}
+
+static void test_eow(void)
+{
+    CHECK(eow_crc32((const unsigned char *)"123456789", 9) == 0xCBF43926u);
+
+    unsigned char *vol = malloc(EOW_VOL);
+    char path[PATH_MAX], err[256];
+    tmp_path(path, sizeof(path), "eow.img");
+    EowMap map;
+
+    build_eow_volume(vol);
+    write_file(path, vol, EOW_VOL);
+    int fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == 1);
+    close(fd);
+    CHECK(map.relocation_block_size == EOW_BLOCK && map.map_count == 1);
+    CHECK(map.map_count == 1 && map.maps[0].sequence == 7 && map.maps[0].bits_set == 8);
+    // Verwaltungsdaten 0x2000..0x4000 (Deskriptor, Log, Block-Map), Klartext Bits 2-3, 5, 11 (gekürzt)
+    const EowRange want[] = {{0x2000, 0x2000, EOW_META},
+                             {0x6000, 0x2000, EOW_PLAIN},
+                             {0x9000, 0x1000, EOW_PLAIN},
+                             {0xF000, 0x800, EOW_PLAIN}};
+    CHECK(map.range_count == 4);
+    for (size_t i = 0; i < 4 && i < map.range_count; i++)
+        CHECK(map.ranges[i].offset == want[i].offset && map.ranges[i].length == want[i].length &&
+              map.ranges[i].kind == want[i].kind);
+    CHECK(map.plain_bytes == 0x3800 && map.meta_bytes == 0x2000);
+
+    char report_path[PATH_MAX];
+    tmp_path(report_path, sizeof(report_path), "eow.txt");
+    CHECK(eow_write_report(&map, report_path) == 1);
+    CHECK(eow_write_report(&map, report_path) == 0); // nie überschreiben
+    size_t rlen;
+    unsigned char *rep = read_file(report_path, &rlen);
+    CHECK(rep && strstr((char *)rep, "0x000000006000 0x000000002000 original") != NULL);
+    free(rep);
+
+    // Zusammenführen: Bytes je Bereich aus der richtigen Quelle
+    enum { OFF = 0x1000, TOTAL = OFF + EOW_VOL + 0x1000 };
+    unsigned char *raw_img = malloc(TOTAL), *dec_img = malloc(EOW_VOL);
+    fill_pattern(raw_img, TOTAL, 3);
+    memcpy(raw_img + OFF, vol, EOW_VOL);
+    fill_pattern(raw_img + OFF + EOW_REGION, EOW_REGION_SIZE, 11); // Nutzdaten im Original
+    fill_pattern(dec_img, EOW_VOL, 99);
+    char raw[PATH_MAX], dec[PATH_MAX], merged[PATH_MAX];
+    tmp_path(raw, sizeof(raw), "eow-original.dd");
+    tmp_path(dec, sizeof(dec), "eow-dislocker");
+    tmp_path(merged, sizeof(merged), "eow-merged.dd");
+    write_file(raw, raw_img, TOTAL);
+    write_file(dec, dec_img, EOW_VOL);
+    fd = open(raw, O_RDONLY);
+    eow_free(&map);
+    CHECK(eow_read(fd, OFF, EOW_VOL, &map, err, sizeof(err)) == 1);
+    close(fd);
+    PartitionInfo p = {.slot = 1, .start = OFF / 512, .length = EOW_VOL / 512, .sector_size = 512};
+    unlink(merged);
+    CHECK(merge_image(raw, dec, &p, merged, &map, NULL) == 1);
+    size_t len;
+    unsigned char *out = read_file(merged, &len);
+    CHECK(out && len == TOTAL);
+    if (out && len == TOTAL)
+    {
+        unsigned char zero[0x2000] = {0};
+        const unsigned char *v = out + OFF;
+        CHECK(memcmp(out, raw_img, OFF) == 0);
+        CHECK(memcmp(v, dec_img, 0x2000) == 0);                       // verschlüsselt
+        CHECK(memcmp(v + 0x2000, zero, 0x2000) == 0);                 // Verwaltungsdaten
+        CHECK(memcmp(v + 0x4000, dec_img + 0x4000, 0x2000) == 0);     // Bits 0-1
+        CHECK(memcmp(v + 0x6000, raw_img + OFF + 0x6000, 0x2000) == 0); // Bits 2-3 Klartext
+        CHECK(memcmp(v + 0x8000, dec_img + 0x8000, 0x1000) == 0);     // Bit 4
+        CHECK(memcmp(v + 0x9000, raw_img + OFF + 0x9000, 0x1000) == 0); // Bit 5 Klartext
+        CHECK(memcmp(v + 0xA000, dec_img + 0xA000, 0x5000) == 0);     // Bits 6-10
+        CHECK(memcmp(v + 0xF000, raw_img + OFF + 0xF000, 0x800) == 0);  // Bit 11, gekürzt
+        CHECK(memcmp(v + 0xF800, dec_img + 0xF800, 0x800) == 0);      // hinter dem Bereich
+        CHECK(memcmp(out + OFF + EOW_VOL, raw_img + OFF + EOW_VOL, 0x1000) == 0);
+    }
+    free(out);
+    unlink(merged);
+    eow_free(&map);
+
+    // Kein EOW: anderes BitLocker-Volume und gar kein BitLocker
+    unsigned char *other = malloc(EOW_VOL);
+    memcpy(other, vol, EOW_VOL);
+    other[0xA0] ^= 1;
+    write_file(path, other, EOW_VOL);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == 0);
+    close(fd);
+    memset(other, 0, EOW_VOL);
+    write_file(path, other, EOW_VOL);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == 0);
+    close(fd);
+
+    // Maßgeblicher Record beschädigt: älterer Record gilt (alles verschlüsselt)
+    memcpy(other, vol, EOW_VOL);
+    other[EOW_MAP + 0x400 + 36] ^= 0xFF;
+    write_file(path, other, EOW_VOL);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == 1);
+    close(fd);
+    CHECK(map.plain_bytes == 0 && map.map_count == 1 && map.maps[0].sequence == 5);
+    eow_free(&map);
+
+    // Erste Deskriptor-Kopie defekt, zweite gültig
+    memcpy(other, vol, EOW_VOL);
+    memcpy(other + 0x1000, other + EOW_DESC, 64);
+    put64(other + 0xD0, 0x1000);
+    other[EOW_DESC + 20] ^= 1;
+    write_file(path, other, EOW_VOL);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == 1);
+    close(fd);
+    CHECK(map.descriptor_offset == 0x1000 && map.plain_bytes == 0x3800);
+    eow_free(&map);
+
+    // Beschädigte Tabellen: Abbruch statt stiller Fehlentscheidung
+    const struct
+    {
+        size_t at;
+        int record_seal; // 0 Block-Map neu versiegeln, 1 Record, 2 nicht versiegeln
+    } broken[] = {
+        {EOW_DESC + 20, 2},        // Deskriptor ohne gültige Prüfsumme
+        {EOW_MAP + 1, 2},          // Signatur der Block-Map
+        {EOW_MAP + 0x400 + 16, 1}, // Bitmap mit 10 Bits deckt den Bereich nicht ab
+        {EOW_MAP + 20, 0},         // Bereich außerhalb des Volumes
+    };
+    for (size_t i = 0; i < sizeof(broken) / sizeof(broken[0]); i++)
+    {
+        memcpy(other, vol, EOW_VOL);
+        if (broken[i].at == EOW_MAP + 0x400 + 16)
+            put32(other + broken[i].at, 10);
+        else if (broken[i].at == EOW_MAP + 20)
+            put64(other + EOW_MAP + 20, EOW_VOL);
+        else
+            other[broken[i].at] ^= 0x55;
+        if (broken[i].record_seal == 0)
+            seal(other + EOW_MAP, 512, 56);
+        else if (broken[i].record_seal == 1)
+            seal(other + EOW_MAP + 0x400, 512, 32);
+        write_file(path, other, EOW_VOL);
+        fd = open(path, O_RDONLY);
+        CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == -1 && err[0] != '\0');
+        close(fd);
+    }
+
+    // Beide Records unbrauchbar
+    memcpy(other, vol, EOW_VOL);
+    other[EOW_MAP + 0x200] = 'X';
+    other[EOW_MAP + 0x400] = 'X';
+    write_file(path, other, EOW_VOL);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == -1);
+    close(fd);
+
+    // Zu kurzes Image
+    write_file(path, vol, 256);
+    fd = open(path, O_RDONLY);
+    CHECK(eow_read(fd, 0, EOW_VOL, &map, err, sizeof(err)) == -1);
+    close(fd);
+
+    free(other);
+    free(raw_img);
+    free(dec_img);
+    free(vol);
 }
 
 /* dislocker_runner (nur Fehlerfälle, echte Entschlüsselung prüfen die Integrationstests) */
@@ -607,6 +860,7 @@ int main(void)
     test_image_size();
     test_copy_range();
     test_merge_image();
+    test_eow();
     test_run_dislocker_errors();
     test_build_key_args();
 

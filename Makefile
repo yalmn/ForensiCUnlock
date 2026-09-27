@@ -10,7 +10,8 @@ LIB_SRC = \
     src/ova_mounter.c \
     src/partition_parser.c \
     src/dislocker_runner.c \
-    src/image_merger.c
+    src/image_merger.c \
+    src/eow.c
 
 LIB_OBJ = $(LIB_SRC:.c=.o)
 HEADERS = $(wildcard include/*.h)

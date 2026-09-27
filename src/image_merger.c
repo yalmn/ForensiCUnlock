@@ -3,13 +3,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <linux/fs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/fs.h>
+#endif
 
 #define COPY_BUFFER_SIZE (1024 * 1024)
 
@@ -24,8 +26,10 @@ static int get_fd_size(int fd, uint64_t *size)
         *size = (uint64_t)st.st_size;
         return 1;
     }
+#ifdef __linux__
     if (S_ISBLK(st.st_mode))
         return ioctl(fd, BLKGETSIZE64, size) == 0;
+#endif
     return 0;
 }
 
@@ -116,8 +120,34 @@ int copy_range(int in_fd, uint64_t offset, uint64_t len, int out_fd, const volat
     return ok;
 }
 
+// Schreibt die Partition: grundsätzlich aus der entschlüsselten Datei, bei EOW
+// die unverschlüsselten Bereiche aus dem Original und die Verwaltungsdaten als Nullen.
+static int copy_partition(int raw_fd, int dec_fd, uint64_t part_offset, uint64_t part_bytes, const EowMap *eow,
+                          int out_fd, const volatile sig_atomic_t *stop)
+{
+    uint64_t pos = 0;
+    for (size_t i = 0; eow && i < eow->range_count; i++)
+    {
+        const EowRange *r = &eow->ranges[i];
+        if (r->offset < pos || r->offset >= part_bytes)
+            continue;
+        uint64_t len = r->length < part_bytes - r->offset ? r->length : part_bytes - r->offset;
+        if (r->offset > pos && !copy_range(dec_fd, pos, r->offset - pos, out_fd, stop))
+            return 0;
+        if (r->kind == EOW_PLAIN)
+        {
+            if (!copy_range(raw_fd, part_offset + r->offset, len, out_fd, stop))
+                return 0;
+        }
+        else if (lseek(out_fd, (off_t)len, SEEK_CUR) < 0)
+            return 0;
+        pos = r->offset + len;
+    }
+    return pos >= part_bytes || copy_range(dec_fd, pos, part_bytes - pos, out_fd, stop);
+}
+
 int merge_image(const char *raw_image, const char *decrypted_file, const PartitionInfo *info,
-                const char *merged_path, const volatile sig_atomic_t *stop)
+                const char *merged_path, const EowMap *eow, const volatile sig_atomic_t *stop)
 {
     int raw_fd = -1, dec_fd = -1, out_fd = -1, ok = 0;
     uint64_t raw_size, dec_size;
@@ -163,7 +193,7 @@ int merge_image(const char *raw_image, const char *decrypted_file, const Partiti
     if (!copy_range(raw_fd, 0, part_offset, out_fd, stop))
         goto out;
     printf("[*] Kopiere entschlüsselte Partition (%" PRIu64 " Byte)...\n", part_bytes);
-    if (!copy_range(dec_fd, 0, part_bytes, out_fd, stop))
+    if (!copy_partition(raw_fd, dec_fd, part_offset, part_bytes, eow, out_fd, stop))
         goto out;
     printf("[*] Kopiere Bereich nach der Partition (%" PRIu64 " Byte)...\n", raw_size - tail_offset);
     if (!copy_range(raw_fd, tail_offset, raw_size - tail_offset, out_fd, stop))
